@@ -1,7 +1,7 @@
 {
   "name": "worm-io-clone",
-  "version": "1.0.0",
-  "description": "Multiplayer worm.io-style game",
+  "version": "2.0.0",
+  "description": "Multiplayer worm.io-style game with bots, power-ups, accounts and cosmetics",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "express": "^4.19.2",
-    "socket.io": "^4.7.5"
+    "socket.io": "^4.7.5",
+    "bcryptjs": "^2.4.3"
   }
 }
