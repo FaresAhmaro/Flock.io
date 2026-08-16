@@ -1,2026 +1,258 @@
-```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport"
-      content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-
-<title>Flock.io — Wormate Style</title>
-
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Worm.io Clone</title>
 <style>
-*{
-  box-sizing:border-box;
-  -webkit-tap-highlight-color:transparent;
-}
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0d1117; font-family: 'Segoe UI', Arial, sans-serif; }
+  canvas { display: block; background: #11151c; }
 
-html,body{
-  margin:0;
-  width:100%;
-  height:100%;
-  overflow:hidden;
-  background:#70c64a;
-  font-family:Arial,Helvetica,sans-serif;
-  touch-action:none;
-}
+  #startScreen {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; background: radial-gradient(circle at center, #1b2230, #0a0d12);
+    z-index: 10;
+  }
+  #startScreen h1 { color: #fff; font-size: 42px; margin-bottom: 20px; letter-spacing: 2px; }
+  #startScreen h1 span { color: #5ecbff; }
+  #nameInput {
+    padding: 12px 16px; font-size: 18px; border-radius: 8px; border: none;
+    outline: none; width: 260px; text-align: center; margin-bottom: 16px;
+  }
+  #playBtn {
+    padding: 12px 32px; font-size: 18px; border: none; border-radius: 8px;
+    background: #5ecbff; color: #0a0d12; font-weight: bold; cursor: pointer;
+    transition: transform 0.1s ease;
+  }
+  #playBtn:hover { transform: scale(1.05); }
+  #hint { color: #8892a0; margin-top: 14px; font-size: 14px; }
 
-canvas{
-  display:block;
-  width:100%;
-  height:100%;
-  cursor:none;
-}
+  #hud {
+    position: fixed; top: 12px; left: 12px; color: #fff; font-size: 14px;
+    background: rgba(0,0,0,0.35); padding: 8px 12px; border-radius: 8px; z-index: 5;
+  }
+  #leaderboard {
+    position: fixed; top: 12px; right: 12px; background: rgba(0,0,0,0.35);
+    color: #fff; padding: 10px 14px; border-radius: 8px; width: 180px; z-index: 5;
+  }
+  #leaderboard h3 { font-size: 14px; margin-bottom: 6px; color: #5ecbff; }
+  #leaderboard ol { padding-left: 18px; font-size: 13px; line-height: 1.5; }
 
-/* ---------------- HUD ---------------- */
-
-#hud{
-  position:fixed;
-  top:14px;
-  left:14px;
-  min-width:220px;
-  color:#fff;
-  background:rgba(0,0,0,.35);
-  backdrop-filter:blur(8px);
-  border:1px solid rgba(255,255,255,.2);
-  border-radius:15px;
-  padding:10px 13px;
-  z-index:20;
-  pointer-events:none;
-  text-shadow:0 2px 3px rgba(0,0,0,.55);
-}
-
-#roleLabel{
-  font-size:19px;
-  font-weight:900;
-}
-
-#hungerLabel{
-  margin-top:3px;
-  font-size:12px;
-  opacity:.9;
-}
-
-#buffRow{
-  margin-top:7px;
-  display:flex;
-  flex-wrap:wrap;
-  gap:5px;
-  max-width:250px;
-}
-
-.buff{
-  background:rgba(0,0,0,.4);
-  border:1px solid rgba(255,255,255,.2);
-  border-radius:20px;
-  padding:4px 8px;
-  font-size:11px;
-  font-weight:bold;
-}
-
-/* ---------------- LEADERBOARD ---------------- */
-
-#lb{
-  position:fixed;
-  right:14px;
-  top:14px;
-  width:220px;
-  color:#fff;
-  background:rgba(0,0,0,.38);
-  backdrop-filter:blur(8px);
-  border:1px solid rgba(255,255,255,.2);
-  border-radius:15px;
-  padding:11px 13px;
-  z-index:20;
-  pointer-events:none;
-}
-
-#lb h3{
-  margin:0 0 7px;
-  font-size:11px;
-  letter-spacing:1.5px;
-  text-transform:uppercase;
-  opacity:.7;
-}
-
-#lb ol{
-  margin:0;
-  padding-left:20px;
-  font-size:13px;
-  line-height:1.65;
-}
-
-#lb li{
-  white-space:nowrap;
-  overflow:hidden;
-  text-overflow:ellipsis;
-}
-
-/* ---------------- RADAR ---------------- */
-
-#radar{
-  position:fixed;
-  left:15px;
-  bottom:15px;
-  width:150px;
-  height:150px;
-  opacity:0;
-  transition:opacity:.2s;
-  z-index:20;
-  pointer-events:none;
-}
-
-/* ---------------- STATUS ---------------- */
-
-#status{
-  position:fixed;
-  right:14px;
-  bottom:14px;
-  color:#fff;
-  font-size:11px;
-  background:rgba(0,0,0,.35);
-  padding:5px 9px;
-  border-radius:10px;
-  z-index:20;
-}
-
-/* ---------------- MOBILE JOYSTICK ---------------- */
-
-#joystick{
-  position:fixed;
-  left:25px;
-  bottom:25px;
-  width:125px;
-  height:125px;
-  border-radius:50%;
-  background:rgba(255,255,255,.12);
-  border:2px solid rgba(255,255,255,.2);
-  display:none;
-  z-index:30;
-  pointer-events:none;
-}
-
-#stick{
-  position:absolute;
-  width:52px;
-  height:52px;
-  left:34px;
-  top:34px;
-  border-radius:50%;
-  background:rgba(255,255,255,.55);
-  box-shadow:0 4px 15px rgba(0,0,0,.2);
-}
-
-#boostButton{
-  position:fixed;
-  right:30px;
-  bottom:35px;
-  width:90px;
-  height:90px;
-  border-radius:50%;
-  border:2px solid rgba(255,255,255,.3);
-  background:rgba(255,190,30,.45);
-  color:white;
-  font-weight:900;
-  display:none;
-  z-index:30;
-}
-
-/* ---------------- DEATH SCREEN ---------------- */
-
-#death{
-  position:fixed;
-  inset:0;
-  background:rgba(0,0,0,.55);
-  display:none;
-  align-items:center;
-  justify-content:center;
-  flex-direction:column;
-  color:white;
-  z-index:100;
-  text-align:center;
-}
-
-#death h1{
-  font-size:50px;
-  margin:0 0 10px;
-}
-
-#death button{
-  border:0;
-  border-radius:12px;
-  padding:12px 25px;
-  font-weight:bold;
-  cursor:pointer;
-}
-
-/* ---------------- RESPONSIVE ---------------- */
-
-@media(max-width:700px){
-  #lb{
-    width:165px;
-    font-size:11px;
+  #minimap {
+    position: fixed; bottom: 12px; right: 12px; width: 140px; height: 140px;
+    background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; z-index: 5;
   }
 
-  #hud{
-    min-width:180px;
+  #deathScreen {
+    position: fixed; inset: 0; display: none; flex-direction: column;
+    align-items: center; justify-content: center; background: rgba(10,13,18,0.9); z-index: 20;
   }
-
-  #joystick,
-  #boostButton{
-    display:block;
-  }
-}
+  #deathScreen h2 { color: #ff5e5e; font-size: 32px; margin-bottom: 10px; }
+  #deathScreen p { color: #fff; margin-bottom: 20px; font-size: 18px; }
 </style>
 </head>
-
 <body>
 
-<canvas id="c"></canvas>
-
-<div id="hud">
-  <div id="roleLabel">Connecting...</div>
-  <div id="hungerLabel"></div>
-  <div id="buffRow"></div>
+<div id="startScreen">
+  <h1>Worm<span>.io</span> Clone</h1>
+  <input id="nameInput" type="text" placeholder="Enter your name" maxlength="16" />
+  <button id="playBtn">Play</button>
+  <div id="hint">Move your mouse to steer &middot; Hold click / space to boost</div>
 </div>
 
-<div id="lb">
-  <h3>Top Players</h3>
-  <ol id="lbList"></ol>
+<div id="deathScreen">
+  <h2>You died!</h2>
+  <p id="finalScore">Score: 0</p>
+  <input id="nameInput2" type="text" placeholder="Enter your name" maxlength="16" />
+  <button id="respawnBtn">Play Again</button>
 </div>
 
-<canvas id="radar" width="150" height="150"></canvas>
-
-<div id="status">connecting...</div>
-
-<div id="joystick">
-  <div id="stick"></div>
+<div id="hud" style="display:none;">Score: <span id="scoreVal">0</span></div>
+<div id="leaderboard" style="display:none;">
+  <h3>Leaderboard</h3>
+  <ol id="leaderboardList"></ol>
 </div>
+<canvas id="minimap" width="140" height="140" style="display:none;"></canvas>
 
-<button id="boostButton">BOOST</button>
+<canvas id="game"></canvas>
 
-<div id="death">
-  <h1>💀 GAME OVER</h1>
-  <div id="deathScore"></div>
-  <br>
-  <button onclick="location.reload()">PLAY AGAIN</button>
-</div>
-
+<script src="/socket.io/socket.io.js"></script>
 <script>
+const socket = io();
 
-/* ============================================================
-   CONNECTION
-============================================================ */
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const minimap = document.getElementById('minimap');
+const mctx = minimap.getContext('2d');
 
-const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d");
-
-let W = innerWidth;
-let H = innerHeight;
-
-function resize(){
-  W = canvas.width = innerWidth;
-  H = canvas.height = innerHeight;
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
 }
-
-addEventListener("resize",resize);
+window.addEventListener('resize', resize);
 resize();
 
-const proto = location.protocol === "https:" ? "wss" : "ws";
-const ws = new WebSocket(proto + "://" + location.host);
-
-let myId = null;
-
-let world = {
-  w:6000,
-  h:6000
-};
-
-let hungerLimitMs = 300000;
-
-let state = {
-  players:[],
-  foods:[],
-  leaderboard:[],
-  kingSheepId:null,
-  kingWolfId:null
-};
-
-ws.onopen = ()=>{
-  document.getElementById("status").textContent="ONLINE";
-};
-
-ws.onclose = ()=>{
-  document.getElementById("status").textContent="OFFLINE";
-};
-
-ws.onerror = ()=>{
-  document.getElementById("status").textContent="CONNECTION ERROR";
-};
-
-ws.onmessage = e=>{
-  try{
-
-    const msg = JSON.parse(e.data);
-
-    if(msg.type === "welcome"){
-      myId = msg.id;
-      world = msg.world || world;
-      hungerLimitMs = msg.hungerLimitMs || 300000;
-    }
-
-    if(msg.type === "state"){
-      state = msg;
-    }
-
-  }catch(err){
-    console.error("Bad server packet",err);
-  }
-};
-
-
-/* ============================================================
-   INPUT
-============================================================ */
-
-let dir = {
-  x:0,
-  y:0
-};
-
+let worldSize = 4000;
+let latestState = null;
+let mouseAngle = 0;
 let boosting = false;
+let joined = false;
 
-function sendInput(){
+const startScreen = document.getElementById('startScreen');
+const deathScreen = document.getElementById('deathScreen');
+const hud = document.getElementById('hud');
+const leaderboardEl = document.getElementById('leaderboard');
+const scoreVal = document.getElementById('scoreVal');
+const leaderboardList = document.getElementById('leaderboardList');
+const finalScore = document.getElementById('finalScore');
 
-  if(ws.readyState !== WebSocket.OPEN)
+function startGame(name) {
+  socket.emit('join', { name });
+  startScreen.style.display = 'none';
+  deathScreen.style.display = 'none';
+  hud.style.display = 'block';
+  leaderboardEl.style.display = 'block';
+  minimap.style.display = 'block';
+  joined = true;
+}
+
+document.getElementById('playBtn').addEventListener('click', () => {
+  startGame(document.getElementById('nameInput').value);
+});
+document.getElementById('nameInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') startGame(document.getElementById('nameInput').value);
+});
+document.getElementById('respawnBtn').addEventListener('click', () => {
+  socket.emit('respawn', { name: document.getElementById('nameInput2').value });
+  deathScreen.style.display = 'none';
+  hud.style.display = 'block';
+  leaderboardEl.style.display = 'block';
+  minimap.style.display = 'block';
+});
+
+canvas.addEventListener('mousemove', (e) => {
+  const cx = canvas.width / 2, cy = canvas.height / 2;
+  mouseAngle = Math.atan2(e.clientY - cy, e.clientX - cx);
+});
+canvas.addEventListener('mousedown', () => boosting = true);
+canvas.addEventListener('mouseup', () => boosting = false);
+window.addEventListener('keydown', (e) => { if (e.code === 'Space') boosting = true; });
+window.addEventListener('keyup', (e) => { if (e.code === 'Space') boosting = false; });
+
+// send input to server at a steady rate
+setInterval(() => {
+  if (!joined) return;
+  socket.emit('input', { angle: mouseAngle, boosting });
+}, 50);
+
+socket.on('state', (state) => {
+  latestState = state;
+  if (state.worldSize) worldSize = state.worldSize;
+
+  if (!state.you) {
+    // dead
+    if (joined) {
+      joined = false;
+      hud.style.display = 'none';
+      leaderboardEl.style.display = 'none';
+      minimap.style.display = 'none';
+      deathScreen.style.display = 'flex';
+    }
+    // still update leaderboard while dead
+    renderLeaderboard(state.leaderboard);
     return;
+  }
 
-  ws.send(JSON.stringify({
-    type:"input",
-    dx:dir.x,
-    dy:dir.y,
-    boost:boosting
-  }));
-}
-
-setInterval(sendInput,50);
-
-
-/* ============================================================
-   MOUSE
-============================================================ */
-
-addEventListener("mousemove",e=>{
-
-  dir.x = e.clientX - W/2;
-  dir.y = e.clientY - H/2;
-
+  scoreVal.textContent = state.you.score;
+  renderLeaderboard(state.leaderboard);
 });
 
-
-/* ============================================================
-   TOUCH JOYSTICK
-============================================================ */
-
-const joystick = document.getElementById("joystick");
-const stick = document.getElementById("stick");
-
-let touchActive = false;
-
-addEventListener("touchstart",e=>{
-
-  if(!e.touches.length) return;
-
-  touchActive=true;
-
-  const t=e.touches[0];
-
-  const rect=joystick.getBoundingClientRect();
-
-  let dx=t.clientX-(rect.left+rect.width/2);
-  let dy=t.clientY-(rect.top+rect.height/2);
-
-  const max=45;
-  const d=Math.hypot(dx,dy)||1;
-
-  if(d>max){
-    dx=dx/d*max;
-    dy=dy/d*max;
-  }
-
-  stick.style.transform=`translate(${dx}px,${dy}px)`;
-
-  dir.x=dx;
-  dir.y=dy;
-
-},{passive:true});
-
-
-addEventListener("touchmove",e=>{
-
-  if(!touchActive) return;
-
-  const t=e.touches[0];
-
-  const rect=joystick.getBoundingClientRect();
-
-  let dx=t.clientX-(rect.left+rect.width/2);
-  let dy=t.clientY-(rect.top+rect.height/2);
-
-  const max=45;
-  const d=Math.hypot(dx,dy)||1;
-
-  if(d>max){
-    dx=dx/d*max;
-    dy=dy/d*max;
-  }
-
-  stick.style.transform=`translate(${dx}px,${dy}px)`;
-
-  dir.x=dx;
-  dir.y=dy;
-
-},{passive:true});
-
-
-addEventListener("touchend",()=>{
-
-  touchActive=false;
-
-  stick.style.transform="translate(0,0)";
-
-  dir.x=0;
-  dir.y=0;
-
-});
-
-
-/* ============================================================
-   BOOST
-============================================================ */
-
-const boostButton=document.getElementById("boostButton");
-
-boostButton.addEventListener("touchstart",e=>{
-  e.preventDefault();
-  boosting=true;
-});
-
-boostButton.addEventListener("touchend",e=>{
-  e.preventDefault();
-  boosting=false;
-});
-
-addEventListener("keydown",e=>{
-  if(e.code==="Space")
-    boosting=true;
-});
-
-addEventListener("keyup",e=>{
-  if(e.code==="Space")
-    boosting=false;
-});
-
-
-/* ============================================================
-   FOOD
-============================================================ */
-
-const FOOD_VISUAL={
-
-  grass:{
-    color:"#78d84d",
-    size:5
-  },
-
-  apple:{
-    emoji:"🍎",
-    size:20
-  },
-
-  corn:{
-    emoji:"🌽",
-    size:21
-  },
-
-  noodles:{
-    emoji:"🍜",
-    size:21
-  },
-
-  momo:{
-    emoji:"🥟",
-    size:21
-  },
-
-  sushi:{
-    emoji:"🍣",
-    size:21
-  },
-
-  sashimi:{
-    emoji:"🍱",
-    size:21
-  },
-
-  burger:{
-    emoji:"🍔",
-    size:22
-  },
-
-  pizza:{
-    emoji:"🍕",
-    size:22
-  },
-
-  donut:{
-    emoji:"🍩",
-    size:21
-  },
-
-  golden:{
-    emoji:"🌟",
-    size:25
-  },
-
-  energy:{
-    emoji:"⚡",
-    size:24
-  },
-
-  turbo:{
-    emoji:"🥤",
-    size:23
-  },
-
-  eagleeye:{
-    emoji:"🔭",
-    size:23
-  },
-
-  shield:{
-    emoji:"🛡️",
-    size:23
-  },
-
-  magnet:{
-    emoji:"🧲",
-    size:23
-  }
-
-};
-
-
-/* ============================================================
-   CAMERA
-============================================================ */
-
-let camera={
-  x:world.w/2,
-  y:world.h/2,
-  zoom:1
-};
-
-function worldToScreen(x,y){
-
-  return {
-    x:(x-camera.x)*camera.zoom+W/2,
-    y:(y-camera.y)*camera.zoom+H/2
-  };
-
-}
-
-
-/* ============================================================
-   WORM TRAILS
-============================================================ */
-
-const trails=new Map();
-
-function updateTrail(p){
-
-  let trail=trails.get(p.id);
-
-  if(!trail){
-
-    trail=[{
-      x:p.x,
-      y:p.y
-    }];
-
-    trails.set(p.id,trail);
-  }
-
-  const head=trail[0];
-
-  if(Math.hypot(
-    p.x-head.x,
-    p.y-head.y
-  )>2){
-
-    trail.unshift({
-      x:p.x,
-      y:p.y
-    });
-
-  }
-
-  if(trail.length>900)
-    trail.length=900;
-
-  return trail;
-}
-
-
-/* ============================================================
-   BODY SIZE
-============================================================ */
-
-function radiusFor(mass,wolf){
-
-  const base=wolf ? 22 : 15;
-
-  const scale=Math.min(
-    1+mass/(wolf?4000:20000),
-    wolf?3.2:2.8
-  );
-
-  return base*scale;
-
-}
-
-
-/* ============================================================
-   SEGMENTS
-============================================================ */
-
-function segmentPositions(trail,count,spacing){
-
-  if(!trail.length)
-    return [];
-
-  const result=[
-    {
-      x:trail[0].x,
-      y:trail[0].y
-    }
-  ];
-
-  let distance=0;
-  let index=0;
-
-  for(let i=1;i<count;i++){
-
-    const target=i*spacing;
-
-    while(index<trail.length-1){
-
-      const a=trail[index];
-      const b=trail[index+1];
-
-      const d=Math.hypot(
-        b.x-a.x,
-        b.y-a.y
-      );
-
-      if(distance+d>=target){
-
-        const remain=target-distance;
-
-        const f=d ? remain/d : 0;
-
-        result.push({
-          x:a.x+(b.x-a.x)*f,
-          y:a.y+(b.y-a.y)*f
-        });
-
-        break;
-
-      }
-
-      distance+=d;
-      index++;
-
-    }
-
-    if(result.length<i+1){
-
-      const last=trail[trail.length-1];
-
-      result.push({
-        x:last.x,
-        y:last.y
-      });
-
-    }
-
-  }
-
-  return result;
-
-}
-
-
-/* ============================================================
-   SHADOW
-============================================================ */
-
-function drawShadow(x,y,r){
-
-  ctx.save();
-
-  ctx.fillStyle="rgba(0,0,0,.16)";
-
-  ctx.beginPath();
-
-  ctx.ellipse(
-    x,
-    y+r*.7,
-    r*1.05,
-    r*.35,
-    0,
-    0,
-    Math.PI*2
-  );
-
-  ctx.fill();
-
-  ctx.restore();
-
-}
-
-
-/* ============================================================
-   WORM BODY
-============================================================ */
-
-function drawChain(p,isMe,t,isWolf){
-
-  const trail=updateTrail(p);
-
-  const r=radiusFor(p.mass,isWolf);
-
-  const count=Math.min(
-    75,
-    5+Math.floor(
-      p.mass/(isWolf?130:90)
-    )
-  );
-
-  const spacing=r*.72;
-
-  const segs=segmentPositions(
-    trail,
-    count,
-    spacing
-  );
-
-  if(!segs.length)
-    return;
-
-  const bodyColor=
-    isWolf
-      ? (p.shadow ? "#9d77d8":"#697581")
-      : "#fff5df";
-
-  const outlineColor=
-    isWolf
-      ? "#48515b"
-      : "#e2d0ad";
-
-
-  /* BODY */
-
-  for(let i=segs.length-1;i>=0;i--){
-
-    const s=worldToScreen(
-      segs[i].x,
-      segs[i].y
-    );
-
-    if(
-      s.x<-100 ||
-      s.x>W+100 ||
-      s.y<-100 ||
-      s.y>H+100
-    )
-      continue;
-
-
-    const taper=
-      1-
-      (i/(segs.length+5))*.4;
-
-    const rr=r*taper;
-
-
-    drawShadow(
-      s.x,
-      s.y,
-      rr
-    );
-
-
-    ctx.fillStyle=bodyColor;
-
-    ctx.strokeStyle=
-      isMe && i===0
-        ? "#ffd52f"
-        : outlineColor;
-
-    ctx.lineWidth=
-      isMe && i===0
-        ? 3
-        : 1.5;
-
-
-    ctx.beginPath();
-
-    ctx.arc(
-      s.x,
-      s.y,
-      rr,
-      0,
-      Math.PI*2
-    );
-
-    ctx.fill();
-    ctx.stroke();
-
-
-    /* body highlight */
-
-    ctx.globalAlpha=.18;
-
-    ctx.fillStyle="#ffffff";
-
-    ctx.beginPath();
-
-    ctx.arc(
-      s.x-rr*.28,
-      s.y-rr*.3,
-      rr*.25,
-      0,
-      Math.PI*2
-    );
-
-    ctx.fill();
-
-    ctx.globalAlpha=1;
-
-  }
-
-
-  /* HEAD */
-
-  const head=worldToScreen(
-    segs[0].x,
-    segs[0].y
-  );
-
-
-  let dx=1;
-  let dy=0;
-
-  if(trail.length>1){
-
-    dx=trail[0].x-trail[1].x;
-    dy=trail[0].y-trail[1].y;
-
-    const d=Math.hypot(dx,dy)||1;
-
-    dx/=d;
-    dy/=d;
-
-  }
-
-
-  /* ears */
-
-  if(isWolf){
-
-    ctx.fillStyle=
-      p.shadow
-        ? "#704c9c"
-        : "#535f6b";
-
-
-    ctx.beginPath();
-
-    ctx.moveTo(
-      head.x-r*.45,
-      head.y-r*.45
-    );
-
-    ctx.lineTo(
-      head.x-r*.75,
-      head.y-r*1.15
-    );
-
-    ctx.lineTo(
-      head.x-r*.1,
-      head.y-r*.65
-    );
-
-    ctx.fill();
-
-
-    ctx.beginPath();
-
-    ctx.moveTo(
-      head.x+r*.45,
-      head.y-r*.45
-    );
-
-    ctx.lineTo(
-      head.x+r*.75,
-      head.y-r*1.15
-    );
-
-    ctx.lineTo(
-      head.x+r*.1,
-      head.y-r*.65
-    );
-
-    ctx.fill();
-
-  }
-
-
-  /* EYES */
-
-  for(const side of[-1,1]){
-
-    const ex=
-      head.x+
-      side*r*.3;
-
-    const ey=
-      head.y-r*.08;
-
-
-    ctx.fillStyle="#fff";
-
-    ctx.beginPath();
-
-    ctx.arc(
-      ex,
-      ey,
-      r*.27,
-      0,
-      Math.PI*2
-    );
-
-    ctx.fill();
-
-
-    const px=
-      ex+
-      dx*r*.12;
-
-    const py=
-      ey+
-      dy*r*.12;
-
-
-    ctx.fillStyle=
-      isWolf
-        ? (p.shadow?"#ff5cd6":"#c23b2c")
-        : "#252018";
-
-
-    ctx.beginPath();
-
-    ctx.arc(
-      px,
-      py,
-      r*.12,
-      0,
-      Math.PI*2
-    );
-
-    ctx.fill();
-
-  }
-
-
-  /* KING */
-
-  if(
-    isWolf &&
-    p.id===state.kingWolfId
-  ){
-
-    ctx.font=`${r*.85}px serif`;
-
-    ctx.textAlign="center";
-
-    ctx.fillText(
-      "👑",
-      head.x,
-      head.y-r-20
-    );
-
-  }
-
-
-  if(
-    !isWolf &&
-    p.id===state.kingSheepId
-  ){
-
-    ctx.font=`${r*.85}px serif`;
-
-    ctx.textAlign="center";
-
-    ctx.fillText(
-      "👑",
-      head.x,
-      head.y-r-20
-    );
-
-  }
-
-
-  /* PLAYER NAME */
-
-  const label=
-    `${p.flag||""} ${p.name||"Player"}${p.shadow?" 👻":""}`;
-
-
-  ctx.font="bold 12px Arial";
-
-  ctx.textAlign="center";
-
-  ctx.strokeStyle="rgba(0,0,0,.55)";
-  ctx.lineWidth=4;
-
-  ctx.strokeText(
-    label,
-    head.x,
-    head.y-r-10
-  );
-
-
-  ctx.fillStyle=
-    isWolf
-      ? "#ff5b52"
-      : isMe
-        ? "#ffe03b"
-        : "#fff";
-
-
-  ctx.fillText(
-    label,
-    head.x,
-    head.y-r-10
-  );
-
-}
-
-
-/* ============================================================
-   PARTICLES
-============================================================ */
-
-const particles=[];
-
-function burst(x,y,emoji,count=8){
-
-  for(let i=0;i<count;i++){
-
-    particles.push({
-
-      x,
-      y,
-
-      vx:(Math.random()-.5)*3,
-      vy:(Math.random()-.5)*3,
-
-      life:1,
-
-      emoji
-
-    });
-
-  }
-
-}
-
-
-function updateParticles(){
-
-  for(let i=particles.length-1;i>=0;i--){
-
-    const p=particles[i];
-
-    p.x+=p.vx;
-    p.y+=p.vy;
-
-    p.vx*=.98;
-    p.vy*=.98;
-
-    p.life-=.025;
-
-    if(p.life<=0)
-      particles.splice(i,1);
-
-  }
-
-}
-
-
-function drawParticles(){
-
-  ctx.textAlign="center";
-
-  for(const p of particles){
-
-    const s=worldToScreen(
-      p.x,
-      p.y
-    );
-
-    ctx.globalAlpha=p.life;
-
-    ctx.font="18px serif";
-
-    ctx.fillText(
-      p.emoji,
-      s.x,
-      s.y
-    );
-
-  }
-
-  ctx.globalAlpha=1;
-
-}
-
-
-/* ============================================================
-   BACKGROUND
-============================================================ */
-
-function drawBackground(t){
-
-  /* sky */
-
-  const sky=ctx.createLinearGradient(
-    0,
-    0,
-    0,
-    H
-  );
-
-  sky.addColorStop(
-    0,
-    "#8fd7ff"
-  );
-
-  sky.addColorStop(
-    .35,
-    "#b9ecff"
-  );
-
-  sky.addColorStop(
-    1,
-    "#83d45b"
-  );
-
-
-  ctx.fillStyle=sky;
-
-  ctx.fillRect(
-    0,
-    0,
-    W,
-    H
-  );
-
-
-  /* grass */
-
-  ctx.fillStyle="#82d153";
-
-  ctx.fillRect(
-    0,
-    H*.12,
-    W,
-    H
-  );
-
-
-  /* subtle grid */
-
-  const grid=70;
-
-  const ox=
-    -(camera.x*camera.zoom)%grid;
-
-  const oy=
-    -(camera.y*camera.zoom)%grid;
-
-
-  ctx.strokeStyle=
-    "rgba(255,255,255,.09)";
-
-  ctx.lineWidth=1;
-
-
-  for(
-    let x=ox;
-    x<W;
-    x+=grid
-  ){
-
-    ctx.beginPath();
-
-    ctx.moveTo(x,0);
-    ctx.lineTo(x,H);
-
-    ctx.stroke();
-
-  }
-
-
-  for(
-    let y=oy;
-    y<H;
-    y+=grid
-  ){
-
-    ctx.beginPath();
-
-    ctx.moveTo(0,y);
-    ctx.lineTo(W,y);
-
-    ctx.stroke();
-
-  }
-
-
-  /* sun */
-
-  const sx=W-100;
-  const sy=85;
-
-  ctx.save();
-
-  ctx.translate(sx,sy);
-
-  ctx.rotate(t*.03);
-
-  ctx.strokeStyle=
-    "rgba(255,235,120,.5)";
-
-  ctx.lineWidth=5;
-
-
-  for(let i=0;i<12;i++){
-
-    const a=
-      i/12*Math.PI*2;
-
-    ctx.beginPath();
-
-    ctx.moveTo(
-      Math.cos(a)*48,
-      Math.sin(a)*48
-    );
-
-    ctx.lineTo(
-      Math.cos(a)*70,
-      Math.sin(a)*70
-    );
-
-    ctx.stroke();
-
-  }
-
-  ctx.restore();
-
-
-  ctx.fillStyle="#ffe26a";
-
-  ctx.beginPath();
-
-  ctx.arc(
-    sx,
-    sy,
-    40,
-    0,
-    Math.PI*2
-  );
-
-  ctx.fill();
-
-}
-
-
-/* ============================================================
-   FLOWERS
-============================================================ */
-
-const flowers=[];
-
-for(let i=0;i<400;i++){
-
-  flowers.push({
-
-    x:Math.random()*6000,
-    y:Math.random()*6000,
-
-    emoji:[
-      "🌼",
-      "🌸",
-      "🌷",
-      "🌻"
-    ][Math.floor(Math.random()*4)]
-
+function renderLeaderboard(list) {
+  leaderboardList.innerHTML = '';
+  (list || []).forEach(p => {
+    const li = document.createElement('li');
+    li.textContent = `${p.name} — ${p.score}`;
+    leaderboardList.appendChild(li);
   });
-
 }
 
-
-/* ============================================================
-   BUTTERFLIES
-============================================================ */
-
-const butterflies=[];
-
-for(let i=0;i<35;i++){
-
-  butterflies.push({
-
-    baseX:Math.random()*6000,
-    baseY:Math.random()*6000,
-
-    radius:20+Math.random()*60,
-
-    speed:.3+Math.random()*.7,
-
-    phase:Math.random()*Math.PI*2
-
-  });
-
+function drawGrid(camX, camY) {
+  const gridSize = 100;
+  ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+  ctx.lineWidth = 1;
+  const startX = -(camX % gridSize);
+  const startY = -(camY % gridSize);
+  for (let x = startX; x < canvas.width; x += gridSize) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+  }
+  for (let y = startY; y < canvas.height; y += gridSize) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+  }
 }
 
+function render() {
+  requestAnimationFrame(render);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-/* ============================================================
-   DRAW FOOD
-============================================================ */
+  if (!latestState || !latestState.you) return;
 
-function drawFood(f,t){
+  const camX = latestState.you.x - canvas.width / 2;
+  const camY = latestState.you.y - canvas.height / 2;
 
-  const s=worldToScreen(
-    f.x,
-    f.y
-  );
+  drawGrid(camX, camY);
 
-  if(
-    s.x<-60 ||
-    s.x>W+60 ||
-    s.y<-60 ||
-    s.y>H+60
-  )
-    return;
+  // world border
+  ctx.strokeStyle = '#ff5e5e';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(-camX, -camY, worldSize, worldSize);
 
-
-  const visual=
-    FOOD_VISUAL[f.key] ||
-    FOOD_VISUAL.grass;
-
-
-  const pulse=
-    1+
-    Math.sin(
-      t*4+
-      (f.x+f.y)*.01
-    )*.08;
-
-
-  if(visual.emoji){
-
-    ctx.save();
-
-    ctx.translate(
-      s.x,
-      s.y
-    );
-
-    ctx.scale(
-      pulse,
-      pulse
-    );
-
-
-    ctx.font=
-      `${visual.size||20}px serif`;
-
-    ctx.textAlign="center";
-    ctx.textBaseline="middle";
-
-    ctx.shadowColor=
-      "rgba(0,0,0,.25)";
-
-    ctx.shadowBlur=5;
-
-    ctx.fillText(
-      visual.emoji,
-      0,
-      0
-    );
-
-    ctx.restore();
-
-  }else{
-
-    ctx.fillStyle=visual.color;
-
+  // food
+  for (const f of latestState.food) {
+    const sx = f.x - camX, sy = f.y - camY;
+    if (sx < -20 || sx > canvas.width + 20 || sy < -20 || sy > canvas.height + 20) continue;
     ctx.beginPath();
-
-    ctx.arc(
-      s.x,
-      s.y,
-      5*pulse,
-      0,
-      Math.PI*2
-    );
-
+    ctx.arc(sx, sy, f.r, 0, Math.PI * 2);
+    ctx.fillStyle = f.color;
+    ctx.shadowBlur = 8;
+    ctx.shadowColor = f.color;
     ctx.fill();
-
+    ctx.shadowBlur = 0;
   }
 
-}
-
-
-/* ============================================================
-   RADAR
-============================================================ */
-
-function drawRadar(me){
-
-  const radar=
-    document.getElementById("radar");
-
-  const rctx=
-    radar.getContext("2d");
-
-  if(!me || me.visionMsLeft<=0){
-
-    radar.style.opacity=0;
-
-    return;
-
-  }
-
-
-  radar.style.opacity=1;
-
-  rctx.clearRect(
-    0,
-    0,
-    150,
-    150
-  );
-
-
-  const cx=75;
-  const cy=75;
-  const R=64;
-  const range=1300;
-
-
-  rctx.fillStyle=
-    "rgba(5,8,12,.65)";
-
-  rctx.beginPath();
-
-  rctx.arc(
-    cx,
-    cy,
-    R,
-    0,
-    Math.PI*2
-  );
-
-  rctx.fill();
-
-
-  rctx.strokeStyle=
-    "rgba(180,130,255,.6)";
-
-  rctx.lineWidth=2;
-
-  rctx.stroke();
-
-
-  /* player */
-
-  rctx.fillStyle="#fff";
-
-  rctx.beginPath();
-
-  rctx.arc(
-    cx,
-    cy,
-    4,
-    0,
-    Math.PI*2
-  );
-
-  rctx.fill();
-
-
-  for(const p of state.players){
-
-    if(
-      !p.alive ||
-      p.id===myId
-    )
-      continue;
-
-
-    const dx=p.x-me.x;
-    const dy=p.y-me.y;
-
-    const d=Math.hypot(dx,dy);
-
-    if(d>range)
-      continue;
-
-
-    const px=
-      cx+
-      dx/range*R;
-
-    const py=
-      cy+
-      dy/range*R;
-
-
-    rctx.fillStyle=
-      p.role==="wolf"
-        ? "#ff4d4d"
-        : "#f6e7bd";
-
-
-    rctx.beginPath();
-
-    rctx.arc(
-      px,
-      py,
-      3,
-      0,
-      Math.PI*2
-    );
-
-    rctx.fill();
-
-  }
-
-}
-
-
-/* ============================================================
-   HUD
-============================================================ */
-
-function updateHUD(me){
-
-  if(!me)
-    return;
-
-
-  const role=
-    me.role==="wolf"
-      ? "🐺 WOLF"
-      : "🐑 SHEEP";
-
-
-  document.getElementById(
-    "roleLabel"
-  ).textContent=
-    `${role}  •  ${Math.floor(me.mass||0)} MASS`;
-
-
-  const hunger=
-    Math.ceil(
-      Math.max(
-        0,
-        me.hungerMs||0
-      )/1000
-    );
-
-
-  document.getElementById(
-    "hungerLabel"
-  ).textContent=
-    hunger<30
-      ? `⚠️ EAT NOW — ${hunger}s`
-      : `🍖 FED — ${hunger}s`;
-
-
-  let html="";
-
-
-  if(me.boostMsLeft>0){
-
-    const icon=
-      me.boostType==="golden"
-        ? "✨"
-        : me.boostType==="turbo"
-          ? "🥤"
-          : "⚡";
-
-
-    html+=
-      `<span class="buff">
-        ${icon} ${Math.ceil(me.boostMsLeft/1000)}s
-      </span>`;
-
-  }
-
-
-  if(me.visionMsLeft>0){
-
-    html+=
-      `<span class="buff">
-        🔭 ${Math.ceil(me.visionMsLeft/1000)}s
-      </span>`;
-
-  }
-
-
-  if(me.shieldMsLeft>0){
-
-    html+=
-      `<span class="buff">
-        🛡️ ${Math.ceil(me.shieldMsLeft/1000)}s
-      </span>`;
-
-  }
-
-
-  if(me.magnetMsLeft>0){
-
-    html+=
-      `<span class="buff">
-        🧲 ${Math.ceil(me.magnetMsLeft/1000)}s
-      </span>`;
-
-  }
-
-
-  document.getElementById(
-    "buffRow"
-  ).innerHTML=html;
-
-}
-
-
-/* ============================================================
-   LEADERBOARD
-============================================================ */
-
-function updateLeaderboard(){
-
-  const list=
-    document.getElementById(
-      "lbList"
-    );
-
-
-  const top=
-    state.leaderboard||[];
-
-
-  list.innerHTML=
-    top.slice(0,10).map(
-      (p,i)=>{
-
-        const me=
-          p.id===myId;
-
-
-        return `
-          <li style="
-            color:${me?"#ffd83d":"#fff"};
-            font-weight:${me?"900":"normal"};
-          ">
-            ${p.role==="wolf"?"🐺":"🐑"}
-            ${p.flag||""}
-            ${p.name||"Player"}
-            — ${Math.floor(p.mass||0)}
-          </li>
-        `;
-
-      }
-    ).join("");
-
-}
-
-
-/* ============================================================
-   WORLD BORDER
-============================================================ */
-
-function drawWorldBorder(){
-
-  const a=
-    worldToScreen(
-      0,
-      0
-    );
-
-  const b=
-    worldToScreen(
-      world.w,
-      world.h
-    );
-
-
-  ctx.save();
-
-  ctx.strokeStyle=
-    "#ff4242";
-
-  ctx.lineWidth=6;
-
-  ctx.shadowColor=
-    "rgba(255,0,0,.4)";
-
-  ctx.shadowBlur=15;
-
-
-  ctx.strokeRect(
-    a.x,
-    a.y,
-    b.x-a.x,
-    b.y-a.y
-  );
-
-
-  ctx.restore();
-
-}
-
-
-/* ============================================================
-   DEATH
-============================================================ */
-
-function showDeath(me){
-
-  const death=
-    document.getElementById(
-      "death"
-    );
-
-
-  death.style.display="flex";
-
-
-  document.getElementById(
-    "deathScore"
-  ).textContent=
-    `Mass: ${Math.floor(me.mass||0)}`;
-
-}
-
-
-/* ============================================================
-   MAIN RENDER
-============================================================ */
-
-let lastTime=performance.now();
-
-function draw(){
-
-  const now=performance.now();
-
-  const dt=
-    Math.min(
-      50,
-      now-lastTime
-    );
-
-  lastTime=now;
-
-  const t=now/1000;
-
-
-  const me=
-    state.players.find(
-      p=>p.id===myId
-    );
-
-
-  /* CAMERA */
-
-  if(me){
-
-    camera.x+=
-      (me.x-camera.x)*.12;
-
-    camera.y+=
-      (me.y-camera.y)*.12;
-
-
-    /* Wormate-style zoom */
-
-    const targetZoom=
-      Math.max(
-        .55,
-        Math.min(
-          1,
-          1-
-          Math.log10(
-            Math.max(
-              1,
-              me.mass
-            )
-          )*.035
-        )
-      );
-
-
-    camera.zoom+=
-      (targetZoom-camera.zoom)*.04;
-
-
-    updateHUD(me);
-    updateLeaderboard();
-    drawRadar(me);
-
-
-    if(!me.alive){
-
-      showDeath(me);
-
+  // worms
+  for (const w of latestState.worms) {
+    ctx.fillStyle = w.color;
+    for (let i = w.segments.length - 1; i >= 0; i--) {
+      const s = w.segments[i];
+      const sx = s.x - camX, sy = s.y - camY;
+      const radius = i === 0 ? 10 : 8;
+      ctx.beginPath();
+      ctx.arc(sx, sy, radius, 0, Math.PI * 2);
+      ctx.fill();
     }
-
+    // name label above head
+    const head = w.segments[0];
+    ctx.fillStyle = '#fff';
+    ctx.font = '13px Segoe UI';
+    ctx.textAlign = 'center';
+    ctx.fillText(w.name, head.x - camX, head.y - camY - 20);
   }
 
-
-  /* BACKGROUND */
-
-  drawBackground(t);
-
-
-  /* FLOWERS */
-
-  ctx.font="18px serif";
-
-  for(const f of flowers){
-
-    const s=
-      worldToScreen(
-        f.x,
-        f.y
-      );
-
-
-    if(
-      s.x<-30 ||
-      s.x>W+30 ||
-      s.y<-30 ||
-      s.y>H+30
-    )
-      continue;
-
-
-    ctx.fillText(
-      f.emoji,
-      s.x,
-      s.y
-    );
-
+  // minimap
+  mctx.clearRect(0, 0, minimap.width, minimap.height);
+  mctx.fillStyle = 'rgba(255,255,255,0.08)';
+  mctx.fillRect(0, 0, minimap.width, minimap.height);
+  const scale = minimap.width / worldSize;
+  for (const w of latestState.worms) {
+    const head = w.segments[0];
+    mctx.fillStyle = w.color;
+    mctx.beginPath();
+    mctx.arc(head.x * scale, head.y * scale, 3, 0, Math.PI * 2);
+    mctx.fill();
   }
-
-
-  /* BUTTERFLIES */
-
-  for(const b of butterflies){
-
-    const wx=
-      b.baseX+
-      Math.cos(
-        t*b.speed+b.phase
-      )*b.radius;
-
-
-    const wy=
-      b.baseY+
-      Math.sin(
-        t*b.speed*1.7+b.phase
-      )*
-      b.radius*.6;
-
-
-    const s=
-      worldToScreen(
-        wx,
-        wy
-      );
-
-
-    if(
-      s.x<-30 ||
-      s.x>W+30 ||
-      s.y<-30 ||
-      s.y>H+30
-    )
-      continue;
-
-
-    ctx.font="17px serif";
-
-    ctx.fillText(
-      "🦋",
-      s.x,
-      s.y
-    );
-
-  }
-
-
-  /* BORDER */
-
-  drawWorldBorder();
-
-
-  /* FOOD */
-
-  for(const f of state.foods||[])
-    drawFood(f,t);
-
-
-  /* PLAYERS */
-
-  for(const p of state.players||[]){
-
-    if(!p.alive)
-      continue;
-
-
-    if(p.role==="wolf")
-      drawChain(
-        p,
-        false,
-        t,
-        true
-      );
-    else
-      drawChain(
-        p,
-        p.id===myId,
-        t,
-        false
-      );
-
-  }
-
-
-  /* PARTICLES */
-
-  updateParticles();
-  drawParticles();
-
-
-  /* BOOST SCREEN EFFECT */
-
-  if(
-    me &&
-    me.boostMsLeft>0
-  ){
-
-    const pulse=
-      .5+
-      Math.sin(t*8)*.5;
-
-
-    ctx.fillStyle=
-      `rgba(255,220,30,${.025*pulse})`;
-
-
-    ctx.fillRect(
-      0,
-      0,
-      W,
-      H
-    );
-
-  }
-
-
-  requestAnimationFrame(draw);
-
 }
-
-draw();
-
+render();
 </script>
 </body>
 </html>
-```
