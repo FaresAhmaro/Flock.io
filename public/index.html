@@ -47,8 +47,8 @@ const FOOD_VISUAL = {
   eagleeye:{ emoji:'🔭' }, shield:{ emoji:'🛡️' }, magnet: { emoji:'🧲' },
 };
 
-let myId = null, world = { w: 3000, h: 3000 }, hungerLimitMs = 300000;
-let state = { players: [], foods: [], kingSheepId:null, kingWolfId:null };
+let myId = null, world = { w: 6000, h: 6000 }, hungerLimitMs = 300000;
+let state = { players: [], foods: [], kingSheepId:null, kingWolfId:null, leaderboard:[] };
 let camera = { x: world.w/2, y: world.h/2 };
 
 const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -76,22 +76,52 @@ function radiusFor(mass, isWolf){
 }
 function worldToScreen(x,y){ return { x: x - camera.x + innerWidth/2, y: y - camera.y + innerHeight/2 }; }
 
-function drawSheep(p, isMe){
+// stable per-player animation phase, derived from their id, so every
+// sheep/wolf's eyes wiggle and tongue wags on its own independent beat
+function seedFromId(id){
+  let h = 0;
+  for (let i=0;i<id.length;i++) h = (h*31 + id.charCodeAt(i)) >>> 0;
+  return (h % 1000) / 1000 * Math.PI * 2;
+}
+
+function drawSheep(p, isMe, t){
   const s = worldToScreen(p.x, p.y);
   if (s.x < -60 || s.x > innerWidth+60 || s.y < -60 || s.y > innerHeight+60) return;
   const r = radiusFor(p.mass, false);
+  const seed = seedFromId(p.id);
+
   ctx.fillStyle = '#fdfaf1';
   ctx.strokeStyle = isMe ? '#ffd23f' : 'rgba(0,0,0,.3)';
   ctx.lineWidth = isMe ? 3 : 1.5;
   ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, 7); ctx.fill(); ctx.stroke();
+
+  // wiggly wool — each tuft bobs on its own phase
   const woolCount = p.mass > 2000 ? 10 : p.mass > 500 ? 8 : 6;
   for (let i=0;i<woolCount;i++){
     const a = (i/woolCount)*Math.PI*2;
-    ctx.beginPath(); ctx.arc(s.x+Math.cos(a)*r*0.8, s.y+Math.sin(a)*r*0.8, r*0.24, 0, 7); ctx.fill();
+    const wobble = r*0.8 + Math.sin(t*3 + seed + i)*r*0.06;
+    ctx.beginPath(); ctx.arc(s.x+Math.cos(a)*wobble, s.y+Math.sin(a)*wobble, r*0.24, 0, 7); ctx.fill();
   }
-  ctx.fillStyle = '#4a3a2c';
-  ctx.beginPath(); ctx.arc(s.x - r*0.28, s.y - r*0.1, r*0.1, 0, 7); ctx.fill();
-  ctx.beginPath(); ctx.arc(s.x + r*0.28, s.y - r*0.1, r*0.1, 0, 7); ctx.fill();
+
+  // blush
+  ctx.fillStyle = 'rgba(255,140,140,.55)';
+  ctx.beginPath(); ctx.arc(s.x - r*0.55, s.y + r*0.14, r*0.16, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(s.x + r*0.55, s.y + r*0.14, r*0.16, 0, 7); ctx.fill();
+
+  // googly eyes — whites stay put, pupils drift around in a little circle
+  const pupilX = Math.cos(t*2.2 + seed) * r*0.05;
+  const pupilY = Math.sin(t*2.2 + seed) * r*0.05;
+  for (const side of [-1, 1]){
+    const ex = s.x + side*r*0.3, ey = s.y - r*0.12;
+    ctx.fillStyle = '#fff';
+    ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(ex, ey, r*0.18, 0, 7); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#2b2117';
+    ctx.beginPath(); ctx.arc(ex+pupilX, ey+pupilY, r*0.09, 0, 7); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.9)';
+    ctx.beginPath(); ctx.arc(ex+pupilX-r*0.03, ey+pupilY-r*0.03, r*0.03, 0, 7); ctx.fill();
+  }
+
   if (p.mass >= 2000){
     ctx.strokeStyle = '#6b5539'; ctx.lineWidth = r*0.14; ctx.lineCap='round';
     ctx.beginPath(); ctx.moveTo(s.x-r*0.4,s.y-r*0.5); ctx.lineTo(s.x-r*0.7,s.y-r*0.9); ctx.stroke();
@@ -106,20 +136,45 @@ function drawSheep(p, isMe){
   ctx.fillText(`${p.flag} ${p.name}`, s.x, s.y - r - 8);
 }
 
-function drawWolf(p){
+function drawWolf(p, t){
   const s = worldToScreen(p.x, p.y);
   if (s.x < -60 || s.x > innerWidth+60 || s.y < -60 || s.y > innerHeight+60) return;
   const r = radiusFor(p.mass, true);
+  const seed = seedFromId(p.id);
+
   ctx.globalAlpha = p.shadow ? 0.55 : 1;
   ctx.fillStyle = p.shadow ? '#4b2b52' : '#5b4636';
   ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, 7); ctx.fill();
+
+  // big ears
   ctx.beginPath();
-  ctx.moveTo(s.x-r*0.5, s.y-r*0.7); ctx.lineTo(s.x-r*0.7, s.y-r*1.2); ctx.lineTo(s.x-r*0.2, s.y-r*0.85); ctx.fill();
+  ctx.moveTo(s.x-r*0.55, s.y-r*0.75); ctx.lineTo(s.x-r*0.85, s.y-r*1.35); ctx.lineTo(s.x-r*0.15, s.y-r*0.9); ctx.fill();
   ctx.beginPath();
-  ctx.moveTo(s.x+r*0.5, s.y-r*0.7); ctx.lineTo(s.x+r*0.7, s.y-r*1.2); ctx.lineTo(s.x+r*0.2, s.y-r*0.85); ctx.fill();
+  ctx.moveTo(s.x+r*0.55, s.y-r*0.75); ctx.lineTo(s.x+r*0.85, s.y-r*1.35); ctx.lineTo(s.x+r*0.15, s.y-r*0.9); ctx.fill();
+
+  // eyebrows — the bit that makes it read as "funny/fierce" instead of blank
+  ctx.strokeStyle = p.shadow ? '#2a1030' : '#2e2115'; ctx.lineWidth = r*0.08; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(s.x-r*0.44, s.y-r*0.26); ctx.lineTo(s.x-r*0.16, s.y-r*0.36); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(s.x+r*0.44, s.y-r*0.26); ctx.lineTo(s.x+r*0.16, s.y-r*0.36); ctx.stroke();
+
+  // eyes
   ctx.fillStyle = p.shadow ? '#ff5cd6' : '#ffcf3f';
-  ctx.beginPath(); ctx.arc(s.x-r*0.3, s.y-r*0.1, r*0.1, 0, 7); ctx.fill();
-  ctx.beginPath(); ctx.arc(s.x+r*0.3, s.y-r*0.1, r*0.1, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(s.x-r*0.3, s.y-r*0.1, r*0.11, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(s.x+r*0.3, s.y-r*0.1, r*0.11, 0, 7); ctx.fill();
+  ctx.fillStyle = '#1a1a1a';
+  ctx.beginPath(); ctx.arc(s.x-r*0.3, s.y-r*0.1, r*0.045, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(s.x+r*0.3, s.y-r*0.1, r*0.045, 0, 7); ctx.fill();
+
+  // snout, teeth, and a wagging tongue
+  ctx.fillStyle = p.shadow ? '#3a1f42' : '#4a3527';
+  ctx.beginPath(); ctx.ellipse(s.x, s.y+r*0.42, r*0.32, r*0.2, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.moveTo(s.x-r*0.18, s.y+r*0.34); ctx.lineTo(s.x-r*0.1, s.y+r*0.34); ctx.lineTo(s.x-r*0.14, s.y+r*0.48); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(s.x+r*0.18, s.y+r*0.34); ctx.lineTo(s.x+r*0.1, s.y+r*0.34); ctx.lineTo(s.x+r*0.14, s.y+r*0.48); ctx.fill();
+  const wag = Math.sin(t*6 + seed) * r*0.12;
+  ctx.fillStyle = '#e85a6b';
+  ctx.beginPath(); ctx.ellipse(s.x+wag, s.y+r*0.66, r*0.14, r*0.22, 0, 0, 7); ctx.fill();
+
   ctx.globalAlpha = 1;
   if (p.id === state.kingWolfId){
     ctx.font = `${r*0.8}px serif`; ctx.textAlign='center';
@@ -131,6 +186,7 @@ function drawWolf(p){
 }
 
 function draw(){
+  const t = performance.now()/1000;
   const me = state.players.find(p => p.id === myId);
   if (me){
     camera.x += (me.x - camera.x) * 0.15;
@@ -198,10 +254,12 @@ function draw(){
 
   for (const p of state.players){
     if (!p.alive) continue;
-    if (p.role === 'wolf') drawWolf(p); else drawSheep(p, p.id === myId);
+    if (p.role === 'wolf') drawWolf(p, t); else drawSheep(p, p.id === myId, t);
   }
 
-  const top = [...state.players].filter(p=>p.alive).sort((a,b)=>b.mass-a.mass).slice(0,8);
+  // leaderboard now comes straight from the server (it tracks the global top 8 —
+  // each client only receives nearby players, so we can't compute this locally anymore)
+  const top = state.leaderboard || [];
   document.getElementById('lbList').innerHTML = top.map(p =>
     `<li style="color:${p.id===myId?'#ffd23f':'#fff'}">${p.role==='wolf'?'🐺':'🐑'} ${p.flag} ${p.name} — ${p.mass}</li>`
   ).join('');
