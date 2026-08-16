@@ -1,14 +1,11 @@
 {
-  "name": "flock-io-server",
-  "version": "0.1.0",
-  "private": true,
-  "description": "Authoritative multiplayer server for Flock.io - real-time sheep/wolf survival",
+  "name": "flock-io",
+  "version": "1.0.0",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "ws": "^8.17.0"
+    "ws": "^8.18.0"
   }
 }
