@@ -1,131 +1,252 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<title>Flock.io — Live Multiplayer Test</title>
-<style>
-  html,body{ margin:0; height:100%; background:#0c1018; overflow:hidden; font-family:'Trebuchet MS',sans-serif; }
-  canvas{ display:block; cursor:crosshair; }
-  #hud{ position:fixed; top:14px; left:14px; color:#f3ecd8; text-shadow:0 2px 4px rgba(0,0,0,.6); }
-  #hud .role{ font-size:20px; font-weight:bold; }
-  #hud .role.wolf{ color:#ff8a7a; }
-  #hud .role.sheep{ color:#fdfaf1; }
-  #hud .hunger{ font-size:13px; margin-top:4px; }
-  #lb{ position:fixed; top:14px; right:14px; width:190px; background:rgba(10,12,16,.6);
-       border:1px solid rgba(255,255,255,.15); border-radius:10px; padding:10px 12px; color:#f3ecd8; }
-  #lb h3{ margin:0 0 6px; font-size:11px; letter-spacing:1px; text-transform:uppercase; opacity:.7; }
-  #lb ol{ margin:0; padding-left:18px; font-size:13px; line-height:1.6; }
-  #status{ position:fixed; bottom:14px; left:14px; color:#8fa; font-size:12px; opacity:.7; }
-</style>
-</head>
-<body>
-<canvas id="c"></canvas>
-<div id="hud">
-  <div class="role" id="roleLabel">Connecting...</div>
-  <div class="hunger" id="hungerLabel"></div>
-</div>
-<div id="lb"><h3>Live Players</h3><ol id="lbList"></ol></div>
-<div id="status">connecting to server...</div>
+// ============================================================
+// Flock.io — Authoritative Multiplayer Server (full feature set)
+// Plain Node.js + ws — server decides everything, client only renders it
+// ============================================================
+const express = require('express');
+const http = require('http');
+const WebSocket = require('ws');
+const path = require('path');
 
-<script>
-const canvas = document.getElementById('c');
-const ctx = canvas.getContext('2d');
-function resize(){ canvas.width = innerWidth; canvas.height = innerHeight; }
-resize(); addEventListener('resize', resize);
+const PORT = process.env.PORT || 3000;
+const WORLD = { w: 3000, h: 3000 };
+const TICK_MS = 50;                      // 20 ticks/sec
+const HUNGER_LIMIT_MS = 5 * 60 * 1000;    // 5 minutes — sheep AND wolves
+const BUFF_DURATION_MS = 5 * 60 * 1000;   // energy/turbo/eagle-eye/shield/magnet
+const GOLDEN_DURATION_MS = 20 * 1000;     // legendary Golden Apple stays short
+const SHADOW_DURATION_MS = 10 * 60 * 1000;
+const FOOD_TARGET = 180;
+const SHEEP_RATIO = 0.70;
 
-let myId = null, world = { w: 3000, h: 3000 }, hungerLimitMs = 300000;
-let state = { players: [], foods: [] };
-let camera = { x: world.w/2, y: world.h/2 };
+const NAMES = ['Fares','Layla','Omar','Ivy','Noor','Kenji','Diego','Aisha','Milo','Tariq',
+               'Sofia','Yusuf','Mei','Karim','Elif','Zane','Rania','Hugo','Amara','Bilal'];
+const FLAGS = ['🇯🇴','🇦🇪','🇺🇸','🇷🇺','🇧🇷','🇰🇷','🇪🇬','🇬🇧','🇫🇷','🇮🇳','🇯🇵','🇲🇽','🇹🇷','🇩🇪','🇨🇦'];
 
-const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-const ws = new WebSocket(proto + '://' + location.host);
+const FOOD_TYPES = [
+  { key:'grass',   val:2,  weight:30 },
+  { key:'apple',   val:4,  weight:12 },
+  { key:'corn',    val:4,  weight:9  },
+  { key:'noodles', val:8,  weight:8  },
+  { key:'momo',    val:8,  weight:8  },
+  { key:'sushi',   val:6,  weight:8  },
+  { key:'sashimi', val:7,  weight:6  },
+  { key:'burger',  val:10, weight:5  },
+  { key:'pizza',   val:10, weight:5  },
+  { key:'donut',   val:8,  weight:5  },
+  { key:'golden',  val:30, weight:2, buff:'golden' },
+  { key:'energy',  val:15, weight:3, buff:'energy' },
+  { key:'turbo',   val:12, weight:2, buff:'turbo'  },
+  { key:'eagleeye',val:10, weight:2, buff:'vision' },
+  { key:'shield',  val:10, weight:2, buff:'shield' },
+  { key:'magnet',  val:10, weight:2, buff:'magnet' },
+];
+const TOTAL_WEIGHT = FOOD_TYPES.reduce((a,f) => a + f.weight, 0);
+function pickFoodType(){
+  let r = Math.random() * TOTAL_WEIGHT;
+  for (const f of FOOD_TYPES){ if (r < f.weight) return f; r -= f.weight; }
+  return FOOD_TYPES[0];
+}
 
-ws.onopen = () => { document.getElementById('status').textContent = 'connected'; };
-ws.onclose = () => { document.getElementById('status').textContent = 'disconnected — is the server running?'; };
-ws.onerror = () => { document.getElementById('status').textContent = 'connection error — check the server console'; };
-
-ws.onmessage = (event) => {
-  const msg = JSON.parse(event.data);
-  if(msg.type === 'welcome'){
-    myId = msg.id; world = msg.world; hungerLimitMs = msg.hungerLimitMs;
-  } else if(msg.type === 'state'){
-    state = msg;
-  }
-};
-
-let dir = { x: 0, y: 0 };
-addEventListener('mousemove', (e) => {
-  dir.x = e.clientX - innerWidth/2;
-  dir.y = e.clientY - innerHeight/2;
-});
-setInterval(() => {
-  if(ws.readyState === WebSocket.OPEN){
-    ws.send(JSON.stringify({ type:'input', dx: dir.x, dy: dir.y }));
-  }
-}, 60);
-
+function randomId(){ return Math.random().toString(36).slice(2, 10); }
+function speedFor(mass){ return Math.max(1.1, 3.6 - Math.log(mass + 10) * 0.28); }
 function radiusFor(mass, isWolf){
   const base = isWolf ? 22 : 14;
-  const scale = Math.min(1 + mass/(isWolf?4000:20000), isWolf?3.2:2.4);
-  return base*scale;
+  const scale = Math.min(1 + mass / (isWolf ? 4000 : 20000), isWolf ? 3.2 : 2.4);
+  return base * scale;
 }
-function worldToScreen(x,y){ return { x: x - camera.x + innerWidth/2, y: y - camera.y + innerHeight/2 }; }
 
-function draw(){
-  const me = state.players.find(p => p.id === myId);
-  if(me){
-    camera.x += (me.x - camera.x) * 0.15;
-    camera.y += (me.y - camera.y) * 0.15;
-    document.getElementById('roleLabel').textContent =
-      (me.alive ? '' : '💀 ') + (me.role === 'wolf' ? '🐺 Wolf' : '🐑 Sheep') + ' — Mass ' + me.mass;
-    document.getElementById('roleLabel').className = 'role ' + me.role;
-    const secs = Math.ceil(me.hungerMs/1000);
-    document.getElementById('hungerLabel').textContent =
-      me.hungerMs < 30000 ? `⚠️ Eat now — ${secs}s left` : `Fed — ${secs}s until hungry`;
-  }
+// ---------------- game state ----------------
+const players = new Map();
+const foods = new Map();
 
-  ctx.fillStyle = '#141a24';
-  ctx.fillRect(0,0,innerWidth,innerHeight);
-  ctx.strokeStyle = 'rgba(255,255,255,.05)';
-  const gs = 60;
-  const offX = -(camera.x % gs), offY = -(camera.y % gs);
-  for(let x=offX;x<innerWidth;x+=gs){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,innerHeight); ctx.stroke(); }
-  for(let y=offY;y<innerHeight;y+=gs){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(innerWidth,y); ctx.stroke(); }
-
-  const tl = worldToScreen(0,0), br = worldToScreen(world.w, world.h);
-  ctx.strokeStyle = '#ff3b3b'; ctx.lineWidth = 4;
-  ctx.strokeRect(tl.x, tl.y, br.x-tl.x, br.y-tl.y);
-
-  for(const f of state.foods){
-    const s = worldToScreen(f.x, f.y);
-    ctx.fillStyle = '#8fd66b';
-    ctx.beginPath(); ctx.arc(s.x, s.y, 4, 0, 7); ctx.fill();
-  }
-
-  for(const p of state.players){
-    if(!p.alive) continue;
-    const s = worldToScreen(p.x, p.y);
-    const r = radiusFor(p.mass, p.role === 'wolf');
-    ctx.fillStyle = p.role === 'wolf' ? '#5b4636' : '#fdfaf1';
-    ctx.strokeStyle = p.id === myId ? '#ffd23f' : 'rgba(0,0,0,.3)';
-    ctx.lineWidth = p.id === myId ? 3 : 1.5;
-    ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, 7); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = p.role === 'wolf' ? '#ffcf3f' : '#4a3a2c';
-    ctx.beginPath(); ctx.arc(s.x - r*0.3, s.y - r*0.1, r*0.1, 0, 7); ctx.fill();
-    ctx.beginPath(); ctx.arc(s.x + r*0.3, s.y - r*0.1, r*0.1, 0, 7); ctx.fill();
-    ctx.fillStyle = p.id === myId ? '#ffd23f' : '#fff';
-    ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText(`${p.flag} ${p.name}`, s.x, s.y - r - 8);
-  }
-
-  const top = [...state.players].sort((a,b)=>b.mass-a.mass).slice(0,8);
-  document.getElementById('lbList').innerHTML = top.map(p =>
-    `<li style="color:${p.id===myId?'#ffd23f':'#fff'}">${p.role==='wolf'?'🐺':'🐑'} ${p.flag} ${p.name} — ${p.mass}</li>`
-  ).join('');
-
-  requestAnimationFrame(draw);
+function spawnFood(){
+  const type = pickFoodType();
+  const id = randomId();
+  foods.set(id, { id, x: Math.random()*WORLD.w, y: Math.random()*WORLD.h, key: type.key, val: type.val, buff: type.buff || null });
 }
-draw();
-</script>
-</body>
-</html>
+for (let i=0;i<FOOD_TARGET;i++) spawnFood();
+
+// ---------------- population balancer ----------------
+function assignRole(excludingId){
+  let sheepCount = 0, wolfCount = 0;
+  for (const p of players.values()){
+    if (excludingId && p.id === excludingId) continue;
+    if (p.role === 'sheep') sheepCount++; else if (p.role === 'wolf') wolfCount++;
+  }
+  const total = sheepCount + wolfCount;
+  if (total === 0) return 'sheep';
+  return (sheepCount/total) < SHEEP_RATIO ? 'sheep' : 'wolf';
+}
+
+function freshPlayer(id, ws){
+  const role = assignRole(id);
+  return {
+    id, ws, role,
+    name: NAMES[Math.floor(Math.random()*NAMES.length)],
+    flag: FLAGS[Math.floor(Math.random()*FLAGS.length)],
+    x: Math.random()*WORLD.w, y: Math.random()*WORLD.h,
+    mass: role === 'wolf' ? 260 : 20,
+    alive: true, dirX: 0, dirY: 0, lastAte: Date.now(),
+    boostType: null, boostMult: 1, boostUntil: 0,
+    visionUntil: 0, shieldUntil: 0, magnetUntil: 0, shadowUntil: 0,
+  };
+}
+
+function respawn(p){
+  p.role = assignRole(p.id);
+  p.mass = p.role === 'wolf' ? 260 : 20;
+  p.x = Math.random()*WORLD.w; p.y = Math.random()*WORLD.h;
+  p.alive = true; p.lastAte = Date.now();
+  p.boostType = null; p.boostMult = 1; p.boostUntil = 0;
+  p.visionUntil = 0; p.shieldUntil = 0; p.magnetUntil = 0; p.shadowUntil = 0;
+}
+
+// ---------------- game loop ----------------
+function tick(){
+  const now = Date.now();
+
+  for (const p of players.values()){
+    if (!p.alive) continue;
+    const mag = Math.hypot(p.dirX, p.dirY) || 1;
+    const boostMult = now < p.boostUntil ? p.boostMult : 1;
+    const shadowMult = (p.role === 'wolf' && now < p.shadowUntil) ? 1.35 : 1;
+    const roleMult = p.role === 'wolf' ? 1.15 : 1;
+    const spd = speedFor(p.mass) * boostMult * shadowMult * roleMult;
+    p.x = Math.max(0, Math.min(WORLD.w, p.x + (p.dirX/mag)*spd));
+    p.y = Math.max(0, Math.min(WORLD.h, p.y + (p.dirY/mag)*spd));
+  }
+
+  // magnet — pulls nearby food toward players who have it active
+  for (const p of players.values()){
+    if (!p.alive || now >= p.magnetUntil) continue;
+    for (const f of foods.values()){
+      const dx = p.x-f.x, dy = p.y-f.y, d = Math.hypot(dx,dy);
+      if (d < 260 && d > 1){
+        const pull = Math.min(9, d*0.15);
+        f.x += (dx/d)*pull; f.y += (dy/d)*pull;
+      }
+    }
+  }
+
+  // sheep eat food
+  for (const p of players.values()){
+    if (!p.alive || p.role !== 'sheep') continue;
+    for (const f of foods.values()){
+      const d = Math.hypot(f.x-p.x, f.y-p.y);
+      if (d < radiusFor(p.mass,false) + 8){
+        p.mass += f.val;
+        p.lastAte = now;
+        if (f.buff === 'golden'){ p.boostType='golden'; p.boostMult=1.5; p.boostUntil = now+GOLDEN_DURATION_MS; }
+        else if (f.buff === 'energy'){ p.boostType='energy'; p.boostMult=1.6; p.boostUntil = now+BUFF_DURATION_MS; }
+        else if (f.buff === 'turbo'){ p.boostType='turbo'; p.boostMult=1.35; p.boostUntil = now+BUFF_DURATION_MS; }
+        else if (f.buff === 'vision'){ p.visionUntil = now+BUFF_DURATION_MS; }
+        else if (f.buff === 'shield'){ p.shieldUntil = now+BUFF_DURATION_MS; }
+        else if (f.buff === 'magnet'){ p.magnetUntil = now+BUFF_DURATION_MS; }
+        foods.delete(f.id);
+        spawnFood();
+      }
+    }
+  }
+
+  // wolves eat sheep
+  const sheepList = [...players.values()].filter(p => p.alive && p.role === 'sheep');
+  for (const w of players.values()){
+    if (!w.alive || w.role !== 'wolf') continue;
+    for (const s of sheepList){
+      if (!s.alive) continue;
+      const d = Math.hypot(s.x-w.x, s.y-w.y);
+      if (d < radiusFor(w.mass,true) + radiusFor(s.mass,false)*0.6){
+        if (now < s.shieldUntil){
+          // shielded hit: survive, lose mass, get knocked back, shield consumed
+          s.shieldUntil = 0;
+          s.mass = Math.max(20, s.mass*0.7);
+          const away = Math.atan2(s.y-w.y, s.x-w.x);
+          s.x = Math.max(0, Math.min(WORLD.w, s.x + Math.cos(away)*90));
+          s.y = Math.max(0, Math.min(WORLD.h, s.y + Math.sin(away)*90));
+        } else {
+          const wasGolden = s.boostType === 'golden' && now < s.boostUntil;
+          w.mass += s.mass*0.6;
+          w.lastAte = now;
+          if (wasGolden) w.shadowUntil = now + SHADOW_DURATION_MS;
+          s.alive = false;
+          respawn(s);
+        }
+        break;
+      }
+    }
+  }
+
+  // hunger — everyone, sheep or wolf, dies without eating in 5 minutes
+  for (const p of players.values()){
+    if (p.alive && now - p.lastAte > HUNGER_LIMIT_MS){
+      p.alive = false;
+      respawn(p);
+    }
+  }
+
+  broadcastState(now);
+}
+
+function broadcastState(now){
+  let kingSheepId = null, kingSheepMass = 0;
+  let kingWolfId = null, kingWolfMass = 0;
+  for (const p of players.values()){
+    if (!p.alive) continue;
+    if (p.role === 'sheep' && p.mass > kingSheepMass){ kingSheepMass = p.mass; kingSheepId = p.id; }
+    if (p.role === 'wolf' && p.mass > kingWolfMass){ kingWolfMass = p.mass; kingWolfId = p.id; }
+  }
+
+  const payload = JSON.stringify({
+    type: 'state',
+    kingSheepId, kingWolfId,
+    players: [...players.values()].map(p => ({
+      id: p.id, name: p.name, flag: p.flag, role: p.role,
+      x: Math.round(p.x), y: Math.round(p.y),
+      mass: Math.round(p.mass), alive: p.alive,
+      hungerMs: Math.max(0, HUNGER_LIMIT_MS - (now - p.lastAte)),
+      boostType: now < p.boostUntil ? p.boostType : null,
+      boostMsLeft: Math.max(0, p.boostUntil - now),
+      visionMsLeft: Math.max(0, p.visionUntil - now),
+      shieldMsLeft: Math.max(0, p.shieldUntil - now),
+      magnetMsLeft: Math.max(0, p.magnetUntil - now),
+      shadow: p.role === 'wolf' && now < p.shadowUntil,
+    })),
+    foods: [...foods.values()].map(f => ({ id: f.id, x: Math.round(f.x), y: Math.round(f.y), key: f.key })),
+  });
+  for (const p of players.values()){
+    if (p.ws.readyState === WebSocket.OPEN) p.ws.send(payload);
+  }
+}
+
+setInterval(tick, TICK_MS);
+
+// ---------------- networking plumbing ----------------
+const app = express();
+app.use(express.static(path.join(__dirname, 'public')));
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ server });
+
+wss.on('connection', (ws) => {
+  const id = randomId();
+  const player = freshPlayer(id, ws);
+  players.set(id, player);
+  console.log(`Player joined: ${player.name} (${player.role}) — ${players.size} online`);
+
+  ws.send(JSON.stringify({ type:'welcome', id, world: WORLD, hungerLimitMs: HUNGER_LIMIT_MS }));
+
+  ws.on('message', (raw) => {
+    let msg;
+    try { msg = JSON.parse(raw); } catch (e) { return; }
+    if (msg.type === 'input' && typeof msg.dx === 'number' && typeof msg.dy === 'number'){
+      player.dirX = msg.dx; player.dirY = msg.dy;
+    }
+  });
+
+  ws.on('close', () => {
+    players.delete(id);
+    console.log(`Player left: ${player.name} — ${players.size} online`);
+  });
+});
+
+server.listen(PORT, () => {
+  console.log(`Flock.io server running on http://localhost:${PORT}`);
+});
