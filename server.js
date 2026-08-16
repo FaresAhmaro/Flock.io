@@ -66,7 +66,7 @@ function pickFoodType(){
 }
 
 function randomId(){ return Math.random().toString(36).slice(2, 10); }
-function speedFor(mass){ return Math.max(1.1, 3.6 - Math.log(mass + 10) * 0.28); }
+function speedFor(mass){ return Math.max(1.6, 7.2 - Math.log(mass + 10) * 0.5); }
 function radiusFor(mass, isWolf){
   const base = isWolf ? 22 : 14;
   const scale = Math.min(1 + mass / (isWolf ? 4000 : 20000), isWolf ? 3.2 : 2.4);
