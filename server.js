@@ -240,6 +240,15 @@ app.get('/api/me', (req, res) => {
 
 app.get('/api/cosmetics', (req, res) => { res.json({ skins: SKINS, accessories: ACCESSORIES }); });
 
+app.get('/api/health', (req, res) => {
+  res.json({
+    ok: true,
+    dbMode: db.isUsingMemoryFallback() ? 'in-memory (NOT persistent — accounts reset on restart)' : 'file-based (persistent)',
+    playersOnline: Object.values(players).filter(p => !p.isBot && p.alive).length,
+    botsOnline: Object.values(players).filter(p => p.isBot && p.alive).length
+  });
+});
+
 // ================ SOCKETS ================
 io.on('connection', (socket) => {
   socket.on('join', (data) => {
