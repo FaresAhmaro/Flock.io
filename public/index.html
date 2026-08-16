@@ -1,338 +1,2026 @@
+```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Flock.io — Live Multiplayer</title>
+<meta name="viewport"
+      content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+
+<title>Flock.io — Wormate Style</title>
+
 <style>
-  html,body{ margin:0; height:100%; background:#0c1018; overflow:hidden; font-family:'Trebuchet MS',sans-serif; }
-  canvas{ display:block; cursor:crosshair; }
-  #hud{ position:fixed; top:14px; left:14px; color:#2b2117; text-shadow:0 1px 0 rgba(255,255,255,.5); background:rgba(255,255,255,.35); padding:8px 12px; border-radius:12px; }
-  #hud .role{ font-size:20px; font-weight:bold; }
-  #hud .role.wolf{ color:#c23b2c; }
-  #hud .role.sheep{ color:#5c4a2e; }
-  #hud .hunger{ font-size:13px; margin-top:4px; }
-  #hud .buffs{ margin-top:6px; display:flex; gap:6px; flex-wrap:wrap; max-width:230px; }
-  #hud .buff{ background:rgba(255,255,255,.6); border:1px solid rgba(0,0,0,.15); border-radius:12px; padding:2px 8px; font-size:11px; color:#2b2117; }
-  #lb{ position:fixed; top:14px; right:14px; width:200px; background:rgba(10,12,16,.6);
-       border:1px solid rgba(255,255,255,.15); border-radius:10px; padding:10px 12px; color:#f3ecd8; }
-  #lb h3{ margin:0 0 6px; font-size:11px; letter-spacing:1px; text-transform:uppercase; opacity:.7; }
-  #lb ol{ margin:0; padding-left:18px; font-size:13px; line-height:1.6; }
-  #radar{ position:fixed; left:14px; bottom:14px; opacity:0; transition:opacity .3s ease; }
-  #status{ position:fixed; bottom:14px; right:14px; color:#2b2117; font-size:12px; opacity:.75; background:rgba(255,255,255,.4); padding:2px 8px; border-radius:8px; }
+*{
+  box-sizing:border-box;
+  -webkit-tap-highlight-color:transparent;
+}
+
+html,body{
+  margin:0;
+  width:100%;
+  height:100%;
+  overflow:hidden;
+  background:#70c64a;
+  font-family:Arial,Helvetica,sans-serif;
+  touch-action:none;
+}
+
+canvas{
+  display:block;
+  width:100%;
+  height:100%;
+  cursor:none;
+}
+
+/* ---------------- HUD ---------------- */
+
+#hud{
+  position:fixed;
+  top:14px;
+  left:14px;
+  min-width:220px;
+  color:#fff;
+  background:rgba(0,0,0,.35);
+  backdrop-filter:blur(8px);
+  border:1px solid rgba(255,255,255,.2);
+  border-radius:15px;
+  padding:10px 13px;
+  z-index:20;
+  pointer-events:none;
+  text-shadow:0 2px 3px rgba(0,0,0,.55);
+}
+
+#roleLabel{
+  font-size:19px;
+  font-weight:900;
+}
+
+#hungerLabel{
+  margin-top:3px;
+  font-size:12px;
+  opacity:.9;
+}
+
+#buffRow{
+  margin-top:7px;
+  display:flex;
+  flex-wrap:wrap;
+  gap:5px;
+  max-width:250px;
+}
+
+.buff{
+  background:rgba(0,0,0,.4);
+  border:1px solid rgba(255,255,255,.2);
+  border-radius:20px;
+  padding:4px 8px;
+  font-size:11px;
+  font-weight:bold;
+}
+
+/* ---------------- LEADERBOARD ---------------- */
+
+#lb{
+  position:fixed;
+  right:14px;
+  top:14px;
+  width:220px;
+  color:#fff;
+  background:rgba(0,0,0,.38);
+  backdrop-filter:blur(8px);
+  border:1px solid rgba(255,255,255,.2);
+  border-radius:15px;
+  padding:11px 13px;
+  z-index:20;
+  pointer-events:none;
+}
+
+#lb h3{
+  margin:0 0 7px;
+  font-size:11px;
+  letter-spacing:1.5px;
+  text-transform:uppercase;
+  opacity:.7;
+}
+
+#lb ol{
+  margin:0;
+  padding-left:20px;
+  font-size:13px;
+  line-height:1.65;
+}
+
+#lb li{
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+/* ---------------- RADAR ---------------- */
+
+#radar{
+  position:fixed;
+  left:15px;
+  bottom:15px;
+  width:150px;
+  height:150px;
+  opacity:0;
+  transition:opacity:.2s;
+  z-index:20;
+  pointer-events:none;
+}
+
+/* ---------------- STATUS ---------------- */
+
+#status{
+  position:fixed;
+  right:14px;
+  bottom:14px;
+  color:#fff;
+  font-size:11px;
+  background:rgba(0,0,0,.35);
+  padding:5px 9px;
+  border-radius:10px;
+  z-index:20;
+}
+
+/* ---------------- MOBILE JOYSTICK ---------------- */
+
+#joystick{
+  position:fixed;
+  left:25px;
+  bottom:25px;
+  width:125px;
+  height:125px;
+  border-radius:50%;
+  background:rgba(255,255,255,.12);
+  border:2px solid rgba(255,255,255,.2);
+  display:none;
+  z-index:30;
+  pointer-events:none;
+}
+
+#stick{
+  position:absolute;
+  width:52px;
+  height:52px;
+  left:34px;
+  top:34px;
+  border-radius:50%;
+  background:rgba(255,255,255,.55);
+  box-shadow:0 4px 15px rgba(0,0,0,.2);
+}
+
+#boostButton{
+  position:fixed;
+  right:30px;
+  bottom:35px;
+  width:90px;
+  height:90px;
+  border-radius:50%;
+  border:2px solid rgba(255,255,255,.3);
+  background:rgba(255,190,30,.45);
+  color:white;
+  font-weight:900;
+  display:none;
+  z-index:30;
+}
+
+/* ---------------- DEATH SCREEN ---------------- */
+
+#death{
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,.55);
+  display:none;
+  align-items:center;
+  justify-content:center;
+  flex-direction:column;
+  color:white;
+  z-index:100;
+  text-align:center;
+}
+
+#death h1{
+  font-size:50px;
+  margin:0 0 10px;
+}
+
+#death button{
+  border:0;
+  border-radius:12px;
+  padding:12px 25px;
+  font-weight:bold;
+  cursor:pointer;
+}
+
+/* ---------------- RESPONSIVE ---------------- */
+
+@media(max-width:700px){
+  #lb{
+    width:165px;
+    font-size:11px;
+  }
+
+  #hud{
+    min-width:180px;
+  }
+
+  #joystick,
+  #boostButton{
+    display:block;
+  }
+}
 </style>
 </head>
+
 <body>
+
 <canvas id="c"></canvas>
+
 <div id="hud">
-  <div class="role" id="roleLabel">Connecting...</div>
-  <div class="hunger" id="hungerLabel"></div>
-  <div class="buffs" id="buffRow"></div>
+  <div id="roleLabel">Connecting...</div>
+  <div id="hungerLabel"></div>
+  <div id="buffRow"></div>
 </div>
-<div id="lb"><h3>Live Players</h3><ol id="lbList"></ol></div>
+
+<div id="lb">
+  <h3>Top Players</h3>
+  <ol id="lbList"></ol>
+</div>
+
 <canvas id="radar" width="150" height="150"></canvas>
+
 <div id="status">connecting...</div>
 
+<div id="joystick">
+  <div id="stick"></div>
+</div>
+
+<button id="boostButton">BOOST</button>
+
+<div id="death">
+  <h1>💀 GAME OVER</h1>
+  <div id="deathScore"></div>
+  <br>
+  <button onclick="location.reload()">PLAY AGAIN</button>
+</div>
+
 <script>
-const canvas = document.getElementById('c');
-const ctx = canvas.getContext('2d');
-function resize(){ canvas.width = innerWidth; canvas.height = innerHeight; }
-resize(); addEventListener('resize', resize);
 
-const FOOD_VISUAL = {
-  grass:   { emoji:null, color:'#8fd66b' },
-  apple:   { emoji:'🍎' }, corn: { emoji:'🌽' }, noodles:{ emoji:'🍜' },
-  momo:    { emoji:'🥟' }, sushi:{ emoji:'🍣' }, sashimi:{ emoji:'🍱' },
-  burger:  { emoji:'🍔' }, pizza:{ emoji:'🍕' }, donut:  { emoji:'🍩' },
-  golden:  { emoji:'🌟' }, energy:{ emoji:'⚡' }, turbo:  { emoji:'🥤' },
-  eagleeye:{ emoji:'🔭' }, shield:{ emoji:'🛡️' }, magnet: { emoji:'🧲' },
+/* ============================================================
+   CONNECTION
+============================================================ */
+
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+
+let W = innerWidth;
+let H = innerHeight;
+
+function resize(){
+  W = canvas.width = innerWidth;
+  H = canvas.height = innerHeight;
+}
+
+addEventListener("resize",resize);
+resize();
+
+const proto = location.protocol === "https:" ? "wss" : "ws";
+const ws = new WebSocket(proto + "://" + location.host);
+
+let myId = null;
+
+let world = {
+  w:6000,
+  h:6000
 };
 
-let myId = null, world = { w: 6000, h: 6000 }, hungerLimitMs = 300000;
-let state = { players: [], foods: [], kingSheepId:null, kingWolfId:null, leaderboard:[] };
-let camera = { x: world.w/2, y: world.h/2 };
+let hungerLimitMs = 300000;
 
-const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-const ws = new WebSocket(proto + '://' + location.host);
-ws.onopen = () => { document.getElementById('status').textContent = 'connected'; };
-ws.onclose = () => { document.getElementById('status').textContent = 'disconnected'; };
-ws.onerror = () => { document.getElementById('status').textContent = 'connection error'; };
-ws.onmessage = (event) => {
-  const msg = JSON.parse(event.data);
-  if (msg.type === 'welcome'){ myId = msg.id; world = msg.world; hungerLimitMs = msg.hungerLimitMs; }
-  else if (msg.type === 'state'){ state = msg; }
+let state = {
+  players:[],
+  foods:[],
+  leaderboard:[],
+  kingSheepId:null,
+  kingWolfId:null
 };
 
-let dir = { x: 0, y: 0 };
-addEventListener('mousemove', (e) => { dir.x = e.clientX - innerWidth/2; dir.y = e.clientY - innerHeight/2; });
-addEventListener('touchmove', (e) => {
-  if (e.touches[0]){ dir.x = e.touches[0].clientX - innerWidth/2; dir.y = e.touches[0].clientY - innerHeight/2; }
-}, { passive:true });
-setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type:'input', dx:dir.x, dy:dir.y })); }, 60);
+ws.onopen = ()=>{
+  document.getElementById("status").textContent="ONLINE";
+};
 
-function radiusFor(mass, isWolf){
-  const base = isWolf ? 22 : 14;
-  const scale = Math.min(1 + mass/(isWolf?4000:20000), isWolf?3.2:2.4);
+ws.onclose = ()=>{
+  document.getElementById("status").textContent="OFFLINE";
+};
+
+ws.onerror = ()=>{
+  document.getElementById("status").textContent="CONNECTION ERROR";
+};
+
+ws.onmessage = e=>{
+  try{
+
+    const msg = JSON.parse(e.data);
+
+    if(msg.type === "welcome"){
+      myId = msg.id;
+      world = msg.world || world;
+      hungerLimitMs = msg.hungerLimitMs || 300000;
+    }
+
+    if(msg.type === "state"){
+      state = msg;
+    }
+
+  }catch(err){
+    console.error("Bad server packet",err);
+  }
+};
+
+
+/* ============================================================
+   INPUT
+============================================================ */
+
+let dir = {
+  x:0,
+  y:0
+};
+
+let boosting = false;
+
+function sendInput(){
+
+  if(ws.readyState !== WebSocket.OPEN)
+    return;
+
+  ws.send(JSON.stringify({
+    type:"input",
+    dx:dir.x,
+    dy:dir.y,
+    boost:boosting
+  }));
+}
+
+setInterval(sendInput,50);
+
+
+/* ============================================================
+   MOUSE
+============================================================ */
+
+addEventListener("mousemove",e=>{
+
+  dir.x = e.clientX - W/2;
+  dir.y = e.clientY - H/2;
+
+});
+
+
+/* ============================================================
+   TOUCH JOYSTICK
+============================================================ */
+
+const joystick = document.getElementById("joystick");
+const stick = document.getElementById("stick");
+
+let touchActive = false;
+
+addEventListener("touchstart",e=>{
+
+  if(!e.touches.length) return;
+
+  touchActive=true;
+
+  const t=e.touches[0];
+
+  const rect=joystick.getBoundingClientRect();
+
+  let dx=t.clientX-(rect.left+rect.width/2);
+  let dy=t.clientY-(rect.top+rect.height/2);
+
+  const max=45;
+  const d=Math.hypot(dx,dy)||1;
+
+  if(d>max){
+    dx=dx/d*max;
+    dy=dy/d*max;
+  }
+
+  stick.style.transform=`translate(${dx}px,${dy}px)`;
+
+  dir.x=dx;
+  dir.y=dy;
+
+},{passive:true});
+
+
+addEventListener("touchmove",e=>{
+
+  if(!touchActive) return;
+
+  const t=e.touches[0];
+
+  const rect=joystick.getBoundingClientRect();
+
+  let dx=t.clientX-(rect.left+rect.width/2);
+  let dy=t.clientY-(rect.top+rect.height/2);
+
+  const max=45;
+  const d=Math.hypot(dx,dy)||1;
+
+  if(d>max){
+    dx=dx/d*max;
+    dy=dy/d*max;
+  }
+
+  stick.style.transform=`translate(${dx}px,${dy}px)`;
+
+  dir.x=dx;
+  dir.y=dy;
+
+},{passive:true});
+
+
+addEventListener("touchend",()=>{
+
+  touchActive=false;
+
+  stick.style.transform="translate(0,0)";
+
+  dir.x=0;
+  dir.y=0;
+
+});
+
+
+/* ============================================================
+   BOOST
+============================================================ */
+
+const boostButton=document.getElementById("boostButton");
+
+boostButton.addEventListener("touchstart",e=>{
+  e.preventDefault();
+  boosting=true;
+});
+
+boostButton.addEventListener("touchend",e=>{
+  e.preventDefault();
+  boosting=false;
+});
+
+addEventListener("keydown",e=>{
+  if(e.code==="Space")
+    boosting=true;
+});
+
+addEventListener("keyup",e=>{
+  if(e.code==="Space")
+    boosting=false;
+});
+
+
+/* ============================================================
+   FOOD
+============================================================ */
+
+const FOOD_VISUAL={
+
+  grass:{
+    color:"#78d84d",
+    size:5
+  },
+
+  apple:{
+    emoji:"🍎",
+    size:20
+  },
+
+  corn:{
+    emoji:"🌽",
+    size:21
+  },
+
+  noodles:{
+    emoji:"🍜",
+    size:21
+  },
+
+  momo:{
+    emoji:"🥟",
+    size:21
+  },
+
+  sushi:{
+    emoji:"🍣",
+    size:21
+  },
+
+  sashimi:{
+    emoji:"🍱",
+    size:21
+  },
+
+  burger:{
+    emoji:"🍔",
+    size:22
+  },
+
+  pizza:{
+    emoji:"🍕",
+    size:22
+  },
+
+  donut:{
+    emoji:"🍩",
+    size:21
+  },
+
+  golden:{
+    emoji:"🌟",
+    size:25
+  },
+
+  energy:{
+    emoji:"⚡",
+    size:24
+  },
+
+  turbo:{
+    emoji:"🥤",
+    size:23
+  },
+
+  eagleeye:{
+    emoji:"🔭",
+    size:23
+  },
+
+  shield:{
+    emoji:"🛡️",
+    size:23
+  },
+
+  magnet:{
+    emoji:"🧲",
+    size:23
+  }
+
+};
+
+
+/* ============================================================
+   CAMERA
+============================================================ */
+
+let camera={
+  x:world.w/2,
+  y:world.h/2,
+  zoom:1
+};
+
+function worldToScreen(x,y){
+
+  return {
+    x:(x-camera.x)*camera.zoom+W/2,
+    y:(y-camera.y)*camera.zoom+H/2
+  };
+
+}
+
+
+/* ============================================================
+   WORM TRAILS
+============================================================ */
+
+const trails=new Map();
+
+function updateTrail(p){
+
+  let trail=trails.get(p.id);
+
+  if(!trail){
+
+    trail=[{
+      x:p.x,
+      y:p.y
+    }];
+
+    trails.set(p.id,trail);
+  }
+
+  const head=trail[0];
+
+  if(Math.hypot(
+    p.x-head.x,
+    p.y-head.y
+  )>2){
+
+    trail.unshift({
+      x:p.x,
+      y:p.y
+    });
+
+  }
+
+  if(trail.length>900)
+    trail.length=900;
+
+  return trail;
+}
+
+
+/* ============================================================
+   BODY SIZE
+============================================================ */
+
+function radiusFor(mass,wolf){
+
+  const base=wolf ? 22 : 15;
+
+  const scale=Math.min(
+    1+mass/(wolf?4000:20000),
+    wolf?3.2:2.8
+  );
+
   return base*scale;
-}
-function worldToScreen(x,y){ return { x: x - camera.x + innerWidth/2, y: y - camera.y + innerHeight/2 }; }
 
-// stable per-player animation phase, derived from their id, so every
-// sheep/wolf's eyes wiggle and tongue wags on its own independent beat
-function seedFromId(id){
-  let h = 0;
-  for (let i=0;i<id.length;i++) h = (h*31 + id.charCodeAt(i)) >>> 0;
-  return (h % 1000) / 1000 * Math.PI * 2;
 }
 
-// four little feet peeking out from under the body, trotting in an alternating gait
-function drawFeet(sx, sy, r, t, seed, color){
-  ctx.fillStyle = color;
-  const positions = [
-    { a: 0.55*Math.PI, ph: 0 },       // front-left
-    { a: 0.45*Math.PI, ph: Math.PI }, // front-right
-    { a: -0.55*Math.PI, ph: Math.PI },// back-left
-    { a: -0.45*Math.PI, ph: 0 },      // back-right
+
+/* ============================================================
+   SEGMENTS
+============================================================ */
+
+function segmentPositions(trail,count,spacing){
+
+  if(!trail.length)
+    return [];
+
+  const result=[
+    {
+      x:trail[0].x,
+      y:trail[0].y
+    }
   ];
-  for (const pos of positions){
-    const step = Math.sin(t*9 + seed + pos.ph) * r*0.16;
-    const fx = sx + Math.cos(pos.a)*r*0.72;
-    const fy = sy + Math.sin(pos.a)*r*0.72 + r*0.28 + step;
-    ctx.beginPath(); ctx.ellipse(fx, fy, r*0.13, r*0.19, 0, 0, 7); ctx.fill();
+
+  let distance=0;
+  let index=0;
+
+  for(let i=1;i<count;i++){
+
+    const target=i*spacing;
+
+    while(index<trail.length-1){
+
+      const a=trail[index];
+      const b=trail[index+1];
+
+      const d=Math.hypot(
+        b.x-a.x,
+        b.y-a.y
+      );
+
+      if(distance+d>=target){
+
+        const remain=target-distance;
+
+        const f=d ? remain/d : 0;
+
+        result.push({
+          x:a.x+(b.x-a.x)*f,
+          y:a.y+(b.y-a.y)*f
+        });
+
+        break;
+
+      }
+
+      distance+=d;
+      index++;
+
+    }
+
+    if(result.length<i+1){
+
+      const last=trail[trail.length-1];
+
+      result.push({
+        x:last.x,
+        y:last.y
+      });
+
+    }
+
   }
+
+  return result;
+
 }
 
-function drawSheep(p, isMe, t){
-  const s = worldToScreen(p.x, p.y);
-  if (s.x < -60 || s.x > innerWidth+60 || s.y < -60 || s.y > innerHeight+60) return;
-  const r = radiusFor(p.mass, false);
-  const seed = seedFromId(p.id);
 
-  drawFeet(s.x, s.y, r, t, seed, '#3a2f22');
-  ctx.fillStyle = '#fdfaf1';
-  ctx.strokeStyle = isMe ? '#ffd23f' : 'rgba(0,0,0,.3)';
-  ctx.lineWidth = isMe ? 3 : 1.5;
-  ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, 7); ctx.fill(); ctx.stroke();
+/* ============================================================
+   SHADOW
+============================================================ */
 
-  // wiggly wool — each tuft bobs on its own phase
-  const woolCount = p.mass > 2000 ? 10 : p.mass > 500 ? 8 : 6;
-  for (let i=0;i<woolCount;i++){
-    const a = (i/woolCount)*Math.PI*2;
-    const wobble = r*0.8 + Math.sin(t*3 + seed + i)*r*0.06;
-    ctx.beginPath(); ctx.arc(s.x+Math.cos(a)*wobble, s.y+Math.sin(a)*wobble, r*0.24, 0, 7); ctx.fill();
-  }
+function drawShadow(x,y,r){
 
-  // blush
-  ctx.fillStyle = 'rgba(255,140,140,.55)';
-  ctx.beginPath(); ctx.arc(s.x - r*0.55, s.y + r*0.14, r*0.16, 0, 7); ctx.fill();
-  ctx.beginPath(); ctx.arc(s.x + r*0.55, s.y + r*0.14, r*0.16, 0, 7); ctx.fill();
+  ctx.save();
 
-  // googly eyes — whites stay put, pupils drift around in a little circle
-  const pupilX = Math.cos(t*2.2 + seed) * r*0.05;
-  const pupilY = Math.sin(t*2.2 + seed) * r*0.05;
-  for (const side of [-1, 1]){
-    const ex = s.x + side*r*0.3, ey = s.y - r*0.12;
-    ctx.fillStyle = '#fff';
-    ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.arc(ex, ey, r*0.18, 0, 7); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#2b2117';
-    ctx.beginPath(); ctx.arc(ex+pupilX, ey+pupilY, r*0.09, 0, 7); ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,.9)';
-    ctx.beginPath(); ctx.arc(ex+pupilX-r*0.03, ey+pupilY-r*0.03, r*0.03, 0, 7); ctx.fill();
-  }
+  ctx.fillStyle="rgba(0,0,0,.16)";
 
-  if (p.mass >= 2000){
-    ctx.strokeStyle = '#6b5539'; ctx.lineWidth = r*0.14; ctx.lineCap='round';
-    ctx.beginPath(); ctx.moveTo(s.x-r*0.4,s.y-r*0.5); ctx.lineTo(s.x-r*0.7,s.y-r*0.9); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(s.x+r*0.4,s.y-r*0.5); ctx.lineTo(s.x+r*0.7,s.y-r*0.9); ctx.stroke();
-  }
-  if (p.id === state.kingSheepId){
-    ctx.font = `${r*0.8}px serif`; ctx.textAlign='center';
-    ctx.fillText('🥇', s.x, s.y - r - 22);
-  }
-  ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
-  ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = 3;
-  ctx.strokeText(`${p.flag} ${p.name}`, s.x, s.y - r - 8);
-  ctx.fillStyle = isMe ? '#ffd23f' : '#fff';
-  ctx.fillText(`${p.flag} ${p.name}`, s.x, s.y - r - 8);
-}
-
-function drawWolf(p, t){
-  const s = worldToScreen(p.x, p.y);
-  if (s.x < -60 || s.x > innerWidth+60 || s.y < -60 || s.y > innerHeight+60) return;
-  const r = radiusFor(p.mass, true);
-  const seed = seedFromId(p.id);
-
-  ctx.globalAlpha = p.shadow ? 0.55 : 1;
-  drawFeet(s.x, s.y, r, t, seed, p.shadow ? '#2e1a33' : '#33261c');
-  ctx.fillStyle = p.shadow ? '#4b2b52' : '#5b4636';
-  ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, 7); ctx.fill();
-
-  // big ears
   ctx.beginPath();
-  ctx.moveTo(s.x-r*0.55, s.y-r*0.75); ctx.lineTo(s.x-r*0.85, s.y-r*1.35); ctx.lineTo(s.x-r*0.15, s.y-r*0.9); ctx.fill();
-  ctx.beginPath();
-  ctx.moveTo(s.x+r*0.55, s.y-r*0.75); ctx.lineTo(s.x+r*0.85, s.y-r*1.35); ctx.lineTo(s.x+r*0.15, s.y-r*0.9); ctx.fill();
 
-  // eyebrows — the bit that makes it read as "funny/fierce" instead of blank
-  ctx.strokeStyle = p.shadow ? '#2a1030' : '#2e2115'; ctx.lineWidth = r*0.08; ctx.lineCap = 'round';
-  ctx.beginPath(); ctx.moveTo(s.x-r*0.44, s.y-r*0.26); ctx.lineTo(s.x-r*0.16, s.y-r*0.36); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(s.x+r*0.44, s.y-r*0.26); ctx.lineTo(s.x+r*0.16, s.y-r*0.36); ctx.stroke();
+  ctx.ellipse(
+    x,
+    y+r*.7,
+    r*1.05,
+    r*.35,
+    0,
+    0,
+    Math.PI*2
+  );
 
-  // eyes
-  ctx.fillStyle = p.shadow ? '#ff5cd6' : '#ffcf3f';
-  ctx.beginPath(); ctx.arc(s.x-r*0.3, s.y-r*0.1, r*0.11, 0, 7); ctx.fill();
-  ctx.beginPath(); ctx.arc(s.x+r*0.3, s.y-r*0.1, r*0.11, 0, 7); ctx.fill();
-  ctx.fillStyle = '#1a1a1a';
-  ctx.beginPath(); ctx.arc(s.x-r*0.3, s.y-r*0.1, r*0.045, 0, 7); ctx.fill();
-  ctx.beginPath(); ctx.arc(s.x+r*0.3, s.y-r*0.1, r*0.045, 0, 7); ctx.fill();
+  ctx.fill();
 
-  // snout, teeth, and a wagging tongue
-  ctx.fillStyle = p.shadow ? '#3a1f42' : '#4a3527';
-  ctx.beginPath(); ctx.ellipse(s.x, s.y+r*0.42, r*0.32, r*0.2, 0, 0, 7); ctx.fill();
-  ctx.fillStyle = '#fff';
-  ctx.beginPath(); ctx.moveTo(s.x-r*0.18, s.y+r*0.34); ctx.lineTo(s.x-r*0.1, s.y+r*0.34); ctx.lineTo(s.x-r*0.14, s.y+r*0.48); ctx.fill();
-  ctx.beginPath(); ctx.moveTo(s.x+r*0.18, s.y+r*0.34); ctx.lineTo(s.x+r*0.1, s.y+r*0.34); ctx.lineTo(s.x+r*0.14, s.y+r*0.48); ctx.fill();
-  const wag = Math.sin(t*6 + seed) * r*0.12;
-  ctx.fillStyle = '#e85a6b';
-  ctx.beginPath(); ctx.ellipse(s.x+wag, s.y+r*0.66, r*0.14, r*0.22, 0, 0, 7); ctx.fill();
+  ctx.restore();
 
-  ctx.globalAlpha = 1;
-  if (p.id === state.kingWolfId){
-    ctx.font = `${r*0.8}px serif`; ctx.textAlign='center';
-    ctx.fillText('🩸', s.x, s.y - r - 22);
-  }
-  ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
-  ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = 3;
-  ctx.strokeText(`${p.flag} ${p.name}${p.shadow?' 👻':''}`, s.x, s.y - r - 8);
-  ctx.fillStyle = '#ff8a7a';
-  ctx.fillText(`${p.flag} ${p.name}${p.shadow?' 👻':''}`, s.x, s.y - r - 8);
 }
+
+
+/* ============================================================
+   WORM BODY
+============================================================ */
+
+function drawChain(p,isMe,t,isWolf){
+
+  const trail=updateTrail(p);
+
+  const r=radiusFor(p.mass,isWolf);
+
+  const count=Math.min(
+    75,
+    5+Math.floor(
+      p.mass/(isWolf?130:90)
+    )
+  );
+
+  const spacing=r*.72;
+
+  const segs=segmentPositions(
+    trail,
+    count,
+    spacing
+  );
+
+  if(!segs.length)
+    return;
+
+  const bodyColor=
+    isWolf
+      ? (p.shadow ? "#9d77d8":"#697581")
+      : "#fff5df";
+
+  const outlineColor=
+    isWolf
+      ? "#48515b"
+      : "#e2d0ad";
+
+
+  /* BODY */
+
+  for(let i=segs.length-1;i>=0;i--){
+
+    const s=worldToScreen(
+      segs[i].x,
+      segs[i].y
+    );
+
+    if(
+      s.x<-100 ||
+      s.x>W+100 ||
+      s.y<-100 ||
+      s.y>H+100
+    )
+      continue;
+
+
+    const taper=
+      1-
+      (i/(segs.length+5))*.4;
+
+    const rr=r*taper;
+
+
+    drawShadow(
+      s.x,
+      s.y,
+      rr
+    );
+
+
+    ctx.fillStyle=bodyColor;
+
+    ctx.strokeStyle=
+      isMe && i===0
+        ? "#ffd52f"
+        : outlineColor;
+
+    ctx.lineWidth=
+      isMe && i===0
+        ? 3
+        : 1.5;
+
+
+    ctx.beginPath();
+
+    ctx.arc(
+      s.x,
+      s.y,
+      rr,
+      0,
+      Math.PI*2
+    );
+
+    ctx.fill();
+    ctx.stroke();
+
+
+    /* body highlight */
+
+    ctx.globalAlpha=.18;
+
+    ctx.fillStyle="#ffffff";
+
+    ctx.beginPath();
+
+    ctx.arc(
+      s.x-rr*.28,
+      s.y-rr*.3,
+      rr*.25,
+      0,
+      Math.PI*2
+    );
+
+    ctx.fill();
+
+    ctx.globalAlpha=1;
+
+  }
+
+
+  /* HEAD */
+
+  const head=worldToScreen(
+    segs[0].x,
+    segs[0].y
+  );
+
+
+  let dx=1;
+  let dy=0;
+
+  if(trail.length>1){
+
+    dx=trail[0].x-trail[1].x;
+    dy=trail[0].y-trail[1].y;
+
+    const d=Math.hypot(dx,dy)||1;
+
+    dx/=d;
+    dy/=d;
+
+  }
+
+
+  /* ears */
+
+  if(isWolf){
+
+    ctx.fillStyle=
+      p.shadow
+        ? "#704c9c"
+        : "#535f6b";
+
+
+    ctx.beginPath();
+
+    ctx.moveTo(
+      head.x-r*.45,
+      head.y-r*.45
+    );
+
+    ctx.lineTo(
+      head.x-r*.75,
+      head.y-r*1.15
+    );
+
+    ctx.lineTo(
+      head.x-r*.1,
+      head.y-r*.65
+    );
+
+    ctx.fill();
+
+
+    ctx.beginPath();
+
+    ctx.moveTo(
+      head.x+r*.45,
+      head.y-r*.45
+    );
+
+    ctx.lineTo(
+      head.x+r*.75,
+      head.y-r*1.15
+    );
+
+    ctx.lineTo(
+      head.x+r*.1,
+      head.y-r*.65
+    );
+
+    ctx.fill();
+
+  }
+
+
+  /* EYES */
+
+  for(const side of[-1,1]){
+
+    const ex=
+      head.x+
+      side*r*.3;
+
+    const ey=
+      head.y-r*.08;
+
+
+    ctx.fillStyle="#fff";
+
+    ctx.beginPath();
+
+    ctx.arc(
+      ex,
+      ey,
+      r*.27,
+      0,
+      Math.PI*2
+    );
+
+    ctx.fill();
+
+
+    const px=
+      ex+
+      dx*r*.12;
+
+    const py=
+      ey+
+      dy*r*.12;
+
+
+    ctx.fillStyle=
+      isWolf
+        ? (p.shadow?"#ff5cd6":"#c23b2c")
+        : "#252018";
+
+
+    ctx.beginPath();
+
+    ctx.arc(
+      px,
+      py,
+      r*.12,
+      0,
+      Math.PI*2
+    );
+
+    ctx.fill();
+
+  }
+
+
+  /* KING */
+
+  if(
+    isWolf &&
+    p.id===state.kingWolfId
+  ){
+
+    ctx.font=`${r*.85}px serif`;
+
+    ctx.textAlign="center";
+
+    ctx.fillText(
+      "👑",
+      head.x,
+      head.y-r-20
+    );
+
+  }
+
+
+  if(
+    !isWolf &&
+    p.id===state.kingSheepId
+  ){
+
+    ctx.font=`${r*.85}px serif`;
+
+    ctx.textAlign="center";
+
+    ctx.fillText(
+      "👑",
+      head.x,
+      head.y-r-20
+    );
+
+  }
+
+
+  /* PLAYER NAME */
+
+  const label=
+    `${p.flag||""} ${p.name||"Player"}${p.shadow?" 👻":""}`;
+
+
+  ctx.font="bold 12px Arial";
+
+  ctx.textAlign="center";
+
+  ctx.strokeStyle="rgba(0,0,0,.55)";
+  ctx.lineWidth=4;
+
+  ctx.strokeText(
+    label,
+    head.x,
+    head.y-r-10
+  );
+
+
+  ctx.fillStyle=
+    isWolf
+      ? "#ff5b52"
+      : isMe
+        ? "#ffe03b"
+        : "#fff";
+
+
+  ctx.fillText(
+    label,
+    head.x,
+    head.y-r-10
+  );
+
+}
+
+
+/* ============================================================
+   PARTICLES
+============================================================ */
+
+const particles=[];
+
+function burst(x,y,emoji,count=8){
+
+  for(let i=0;i<count;i++){
+
+    particles.push({
+
+      x,
+      y,
+
+      vx:(Math.random()-.5)*3,
+      vy:(Math.random()-.5)*3,
+
+      life:1,
+
+      emoji
+
+    });
+
+  }
+
+}
+
+
+function updateParticles(){
+
+  for(let i=particles.length-1;i>=0;i--){
+
+    const p=particles[i];
+
+    p.x+=p.vx;
+    p.y+=p.vy;
+
+    p.vx*=.98;
+    p.vy*=.98;
+
+    p.life-=.025;
+
+    if(p.life<=0)
+      particles.splice(i,1);
+
+  }
+
+}
+
+
+function drawParticles(){
+
+  ctx.textAlign="center";
+
+  for(const p of particles){
+
+    const s=worldToScreen(
+      p.x,
+      p.y
+    );
+
+    ctx.globalAlpha=p.life;
+
+    ctx.font="18px serif";
+
+    ctx.fillText(
+      p.emoji,
+      s.x,
+      s.y
+    );
+
+  }
+
+  ctx.globalAlpha=1;
+
+}
+
+
+/* ============================================================
+   BACKGROUND
+============================================================ */
+
+function drawBackground(t){
+
+  /* sky */
+
+  const sky=ctx.createLinearGradient(
+    0,
+    0,
+    0,
+    H
+  );
+
+  sky.addColorStop(
+    0,
+    "#8fd7ff"
+  );
+
+  sky.addColorStop(
+    .35,
+    "#b9ecff"
+  );
+
+  sky.addColorStop(
+    1,
+    "#83d45b"
+  );
+
+
+  ctx.fillStyle=sky;
+
+  ctx.fillRect(
+    0,
+    0,
+    W,
+    H
+  );
+
+
+  /* grass */
+
+  ctx.fillStyle="#82d153";
+
+  ctx.fillRect(
+    0,
+    H*.12,
+    W,
+    H
+  );
+
+
+  /* subtle grid */
+
+  const grid=70;
+
+  const ox=
+    -(camera.x*camera.zoom)%grid;
+
+  const oy=
+    -(camera.y*camera.zoom)%grid;
+
+
+  ctx.strokeStyle=
+    "rgba(255,255,255,.09)";
+
+  ctx.lineWidth=1;
+
+
+  for(
+    let x=ox;
+    x<W;
+    x+=grid
+  ){
+
+    ctx.beginPath();
+
+    ctx.moveTo(x,0);
+    ctx.lineTo(x,H);
+
+    ctx.stroke();
+
+  }
+
+
+  for(
+    let y=oy;
+    y<H;
+    y+=grid
+  ){
+
+    ctx.beginPath();
+
+    ctx.moveTo(0,y);
+    ctx.lineTo(W,y);
+
+    ctx.stroke();
+
+  }
+
+
+  /* sun */
+
+  const sx=W-100;
+  const sy=85;
+
+  ctx.save();
+
+  ctx.translate(sx,sy);
+
+  ctx.rotate(t*.03);
+
+  ctx.strokeStyle=
+    "rgba(255,235,120,.5)";
+
+  ctx.lineWidth=5;
+
+
+  for(let i=0;i<12;i++){
+
+    const a=
+      i/12*Math.PI*2;
+
+    ctx.beginPath();
+
+    ctx.moveTo(
+      Math.cos(a)*48,
+      Math.sin(a)*48
+    );
+
+    ctx.lineTo(
+      Math.cos(a)*70,
+      Math.sin(a)*70
+    );
+
+    ctx.stroke();
+
+  }
+
+  ctx.restore();
+
+
+  ctx.fillStyle="#ffe26a";
+
+  ctx.beginPath();
+
+  ctx.arc(
+    sx,
+    sy,
+    40,
+    0,
+    Math.PI*2
+  );
+
+  ctx.fill();
+
+}
+
+
+/* ============================================================
+   FLOWERS
+============================================================ */
+
+const flowers=[];
+
+for(let i=0;i<400;i++){
+
+  flowers.push({
+
+    x:Math.random()*6000,
+    y:Math.random()*6000,
+
+    emoji:[
+      "🌼",
+      "🌸",
+      "🌷",
+      "🌻"
+    ][Math.floor(Math.random()*4)]
+
+  });
+
+}
+
+
+/* ============================================================
+   BUTTERFLIES
+============================================================ */
+
+const butterflies=[];
+
+for(let i=0;i<35;i++){
+
+  butterflies.push({
+
+    baseX:Math.random()*6000,
+    baseY:Math.random()*6000,
+
+    radius:20+Math.random()*60,
+
+    speed:.3+Math.random()*.7,
+
+    phase:Math.random()*Math.PI*2
+
+  });
+
+}
+
+
+/* ============================================================
+   DRAW FOOD
+============================================================ */
+
+function drawFood(f,t){
+
+  const s=worldToScreen(
+    f.x,
+    f.y
+  );
+
+  if(
+    s.x<-60 ||
+    s.x>W+60 ||
+    s.y<-60 ||
+    s.y>H+60
+  )
+    return;
+
+
+  const visual=
+    FOOD_VISUAL[f.key] ||
+    FOOD_VISUAL.grass;
+
+
+  const pulse=
+    1+
+    Math.sin(
+      t*4+
+      (f.x+f.y)*.01
+    )*.08;
+
+
+  if(visual.emoji){
+
+    ctx.save();
+
+    ctx.translate(
+      s.x,
+      s.y
+    );
+
+    ctx.scale(
+      pulse,
+      pulse
+    );
+
+
+    ctx.font=
+      `${visual.size||20}px serif`;
+
+    ctx.textAlign="center";
+    ctx.textBaseline="middle";
+
+    ctx.shadowColor=
+      "rgba(0,0,0,.25)";
+
+    ctx.shadowBlur=5;
+
+    ctx.fillText(
+      visual.emoji,
+      0,
+      0
+    );
+
+    ctx.restore();
+
+  }else{
+
+    ctx.fillStyle=visual.color;
+
+    ctx.beginPath();
+
+    ctx.arc(
+      s.x,
+      s.y,
+      5*pulse,
+      0,
+      Math.PI*2
+    );
+
+    ctx.fill();
+
+  }
+
+}
+
+
+/* ============================================================
+   RADAR
+============================================================ */
+
+function drawRadar(me){
+
+  const radar=
+    document.getElementById("radar");
+
+  const rctx=
+    radar.getContext("2d");
+
+  if(!me || me.visionMsLeft<=0){
+
+    radar.style.opacity=0;
+
+    return;
+
+  }
+
+
+  radar.style.opacity=1;
+
+  rctx.clearRect(
+    0,
+    0,
+    150,
+    150
+  );
+
+
+  const cx=75;
+  const cy=75;
+  const R=64;
+  const range=1300;
+
+
+  rctx.fillStyle=
+    "rgba(5,8,12,.65)";
+
+  rctx.beginPath();
+
+  rctx.arc(
+    cx,
+    cy,
+    R,
+    0,
+    Math.PI*2
+  );
+
+  rctx.fill();
+
+
+  rctx.strokeStyle=
+    "rgba(180,130,255,.6)";
+
+  rctx.lineWidth=2;
+
+  rctx.stroke();
+
+
+  /* player */
+
+  rctx.fillStyle="#fff";
+
+  rctx.beginPath();
+
+  rctx.arc(
+    cx,
+    cy,
+    4,
+    0,
+    Math.PI*2
+  );
+
+  rctx.fill();
+
+
+  for(const p of state.players){
+
+    if(
+      !p.alive ||
+      p.id===myId
+    )
+      continue;
+
+
+    const dx=p.x-me.x;
+    const dy=p.y-me.y;
+
+    const d=Math.hypot(dx,dy);
+
+    if(d>range)
+      continue;
+
+
+    const px=
+      cx+
+      dx/range*R;
+
+    const py=
+      cy+
+      dy/range*R;
+
+
+    rctx.fillStyle=
+      p.role==="wolf"
+        ? "#ff4d4d"
+        : "#f6e7bd";
+
+
+    rctx.beginPath();
+
+    rctx.arc(
+      px,
+      py,
+      3,
+      0,
+      Math.PI*2
+    );
+
+    rctx.fill();
+
+  }
+
+}
+
+
+/* ============================================================
+   HUD
+============================================================ */
+
+function updateHUD(me){
+
+  if(!me)
+    return;
+
+
+  const role=
+    me.role==="wolf"
+      ? "🐺 WOLF"
+      : "🐑 SHEEP";
+
+
+  document.getElementById(
+    "roleLabel"
+  ).textContent=
+    `${role}  •  ${Math.floor(me.mass||0)} MASS`;
+
+
+  const hunger=
+    Math.ceil(
+      Math.max(
+        0,
+        me.hungerMs||0
+      )/1000
+    );
+
+
+  document.getElementById(
+    "hungerLabel"
+  ).textContent=
+    hunger<30
+      ? `⚠️ EAT NOW — ${hunger}s`
+      : `🍖 FED — ${hunger}s`;
+
+
+  let html="";
+
+
+  if(me.boostMsLeft>0){
+
+    const icon=
+      me.boostType==="golden"
+        ? "✨"
+        : me.boostType==="turbo"
+          ? "🥤"
+          : "⚡";
+
+
+    html+=
+      `<span class="buff">
+        ${icon} ${Math.ceil(me.boostMsLeft/1000)}s
+      </span>`;
+
+  }
+
+
+  if(me.visionMsLeft>0){
+
+    html+=
+      `<span class="buff">
+        🔭 ${Math.ceil(me.visionMsLeft/1000)}s
+      </span>`;
+
+  }
+
+
+  if(me.shieldMsLeft>0){
+
+    html+=
+      `<span class="buff">
+        🛡️ ${Math.ceil(me.shieldMsLeft/1000)}s
+      </span>`;
+
+  }
+
+
+  if(me.magnetMsLeft>0){
+
+    html+=
+      `<span class="buff">
+        🧲 ${Math.ceil(me.magnetMsLeft/1000)}s
+      </span>`;
+
+  }
+
+
+  document.getElementById(
+    "buffRow"
+  ).innerHTML=html;
+
+}
+
+
+/* ============================================================
+   LEADERBOARD
+============================================================ */
+
+function updateLeaderboard(){
+
+  const list=
+    document.getElementById(
+      "lbList"
+    );
+
+
+  const top=
+    state.leaderboard||[];
+
+
+  list.innerHTML=
+    top.slice(0,10).map(
+      (p,i)=>{
+
+        const me=
+          p.id===myId;
+
+
+        return `
+          <li style="
+            color:${me?"#ffd83d":"#fff"};
+            font-weight:${me?"900":"normal"};
+          ">
+            ${p.role==="wolf"?"🐺":"🐑"}
+            ${p.flag||""}
+            ${p.name||"Player"}
+            — ${Math.floor(p.mass||0)}
+          </li>
+        `;
+
+      }
+    ).join("");
+
+}
+
+
+/* ============================================================
+   WORLD BORDER
+============================================================ */
+
+function drawWorldBorder(){
+
+  const a=
+    worldToScreen(
+      0,
+      0
+    );
+
+  const b=
+    worldToScreen(
+      world.w,
+      world.h
+    );
+
+
+  ctx.save();
+
+  ctx.strokeStyle=
+    "#ff4242";
+
+  ctx.lineWidth=6;
+
+  ctx.shadowColor=
+    "rgba(255,0,0,.4)";
+
+  ctx.shadowBlur=15;
+
+
+  ctx.strokeRect(
+    a.x,
+    a.y,
+    b.x-a.x,
+    b.y-a.y
+  );
+
+
+  ctx.restore();
+
+}
+
+
+/* ============================================================
+   DEATH
+============================================================ */
+
+function showDeath(me){
+
+  const death=
+    document.getElementById(
+      "death"
+    );
+
+
+  death.style.display="flex";
+
+
+  document.getElementById(
+    "deathScore"
+  ).textContent=
+    `Mass: ${Math.floor(me.mass||0)}`;
+
+}
+
+
+/* ============================================================
+   MAIN RENDER
+============================================================ */
+
+let lastTime=performance.now();
 
 function draw(){
-  const t = performance.now()/1000;
-  const me = state.players.find(p => p.id === myId);
-  if (me){
-    camera.x += (me.x - camera.x) * 0.15;
-    camera.y += (me.y - camera.y) * 0.15;
 
-    document.getElementById('roleLabel').textContent =
-      (me.alive ? '' : '💀 ') + (me.role === 'wolf' ? '🐺 Wolf' : '🐑 Sheep') + ' — Mass ' + me.mass;
-    document.getElementById('roleLabel').className = 'role ' + me.role;
-    const secs = Math.ceil(me.hungerMs/1000);
-    document.getElementById('hungerLabel').textContent =
-      me.hungerMs < 30000 ? `⚠️ Eat now — ${secs}s left` : `Fed — ${secs}s until hungry`;
+  const now=performance.now();
 
-    let buffHtml = '';
-    if (me.boostMsLeft > 0){
-      const icon = me.boostType === 'golden' ? '✨' : me.boostType === 'turbo' ? '🥤' : '⚡';
-      buffHtml += `<span class="buff">${icon} ${Math.ceil(me.boostMsLeft/1000)}s</span>`;
+  const dt=
+    Math.min(
+      50,
+      now-lastTime
+    );
+
+  lastTime=now;
+
+  const t=now/1000;
+
+
+  const me=
+    state.players.find(
+      p=>p.id===myId
+    );
+
+
+  /* CAMERA */
+
+  if(me){
+
+    camera.x+=
+      (me.x-camera.x)*.12;
+
+    camera.y+=
+      (me.y-camera.y)*.12;
+
+
+    /* Wormate-style zoom */
+
+    const targetZoom=
+      Math.max(
+        .55,
+        Math.min(
+          1,
+          1-
+          Math.log10(
+            Math.max(
+              1,
+              me.mass
+            )
+          )*.035
+        )
+      );
+
+
+    camera.zoom+=
+      (targetZoom-camera.zoom)*.04;
+
+
+    updateHUD(me);
+    updateLeaderboard();
+    drawRadar(me);
+
+
+    if(!me.alive){
+
+      showDeath(me);
+
     }
-    if (me.visionMsLeft > 0) buffHtml += `<span class="buff">🔭 ${Math.ceil(me.visionMsLeft/1000)}s</span>`;
-    if (me.shieldMsLeft > 0) buffHtml += `<span class="buff">🛡️ ${Math.ceil(me.shieldMsLeft/1000)}s</span>`;
-    if (me.magnetMsLeft > 0) buffHtml += `<span class="buff">🧲 ${Math.ceil(me.magnetMsLeft/1000)}s</span>`;
-    document.getElementById('buffRow').innerHTML = buffHtml;
 
-    const radarEl = document.getElementById('radar');
-    if (me.visionMsLeft > 0){
-      radarEl.style.opacity = 1;
-      const rctx = radarEl.getContext('2d');
-      rctx.clearRect(0,0,150,150);
-      const cx=75, cy=75, R=64, range=1000;
-      rctx.fillStyle='rgba(8,10,14,.6)';
-      rctx.beginPath(); rctx.arc(cx,cy,R,0,7); rctx.fill();
-      rctx.strokeStyle='rgba(155,123,255,.5)'; rctx.lineWidth=2; rctx.stroke();
-      rctx.fillStyle='#fff'; rctx.beginPath(); rctx.arc(cx,cy,3,0,7); rctx.fill();
-      for (const p of state.players){
-        if (p.role !== 'wolf' || !p.alive) continue;
-        const dx=p.x-me.x, dy=p.y-me.y, d=Math.hypot(dx,dy);
-        if (d>range) continue;
-        rctx.fillStyle = p.shadow ? '#ff5cd6' : '#ff4d4d';
-        rctx.beginPath(); rctx.arc(cx+(dx/range)*R, cy+(dy/range)*R, 4, 0, 7); rctx.fill();
-      }
-    } else radarEl.style.opacity = 0;
   }
 
-  // bright sunny sky as the backdrop behind everything
-  const skyGrad = ctx.createLinearGradient(0,0,0,innerHeight);
-  skyGrad.addColorStop(0, '#8fd3ff');
-  skyGrad.addColorStop(1, '#c9f0ff');
-  ctx.fillStyle = skyGrad;
-  ctx.fillRect(0,0,innerWidth,innerHeight);
 
-  // sun, fixed in the corner of the screen with soft rays
-  const sunX = innerWidth - 100, sunY = 90;
-  ctx.save();
-  ctx.translate(sunX, sunY); ctx.rotate(t*0.05);
-  ctx.strokeStyle = 'rgba(255,230,120,.55)'; ctx.lineWidth = 6;
-  for (let i=0;i<10;i++){
-    const a = (i/10)*Math.PI*2;
-    ctx.beginPath(); ctx.moveTo(Math.cos(a)*46, Math.sin(a)*46); ctx.lineTo(Math.cos(a)*74, Math.sin(a)*74); ctx.stroke();
-  }
-  ctx.restore();
-  ctx.fillStyle = '#ffe066';
-  ctx.beginPath(); ctx.arc(sunX, sunY, 42, 0, 7); ctx.fill();
+  /* BACKGROUND */
 
-  // grass field — bright green with a subtle blade texture instead of a flat grid
-  const grassGrad = ctx.createLinearGradient(0, innerHeight*0.15, 0, innerHeight);
-  grassGrad.addColorStop(0, '#9fe870');
-  grassGrad.addColorStop(1, '#74c94f');
-  ctx.fillStyle = grassGrad;
-  ctx.fillRect(0, innerHeight*0.1, innerWidth, innerHeight);
+  drawBackground(t);
 
-  ctx.strokeStyle = 'rgba(255,255,255,.18)';
-  const gs = 60;
-  const offX = -(camera.x % gs), offY = -(camera.y % gs);
-  for (let x=offX;x<innerWidth;x+=gs){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,innerHeight); ctx.stroke(); }
-  for (let y=offY;y<innerHeight;y+=gs){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(innerWidth,y); ctx.stroke(); }
 
-  // flowers, scattered across the field
-  ctx.font = '18px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
-  for (const fl of flowers){
-    const s = worldToScreen(fl.x, fl.y);
-    if (s.x < -30 || s.x > innerWidth+30 || s.y < -30 || s.y > innerHeight+30) continue;
-    ctx.fillText(fl.emoji, s.x, s.y);
+  /* FLOWERS */
+
+  ctx.font="18px serif";
+
+  for(const f of flowers){
+
+    const s=
+      worldToScreen(
+        f.x,
+        f.y
+      );
+
+
+    if(
+      s.x<-30 ||
+      s.x>W+30 ||
+      s.y<-30 ||
+      s.y>H+30
+    )
+      continue;
+
+
+    ctx.fillText(
+      f.emoji,
+      s.x,
+      s.y
+    );
+
   }
 
-  // butterflies, drifting lazily in loops
-  ctx.font = '16px serif';
-  for (const b of butterflies){
-    const wx = b.baseX + Math.cos(t*b.speed + b.phase)*b.radius;
-    const wy = b.baseY + Math.sin(t*b.speed*1.7 + b.phase)*b.radius*0.6;
-    const s = worldToScreen(wx, wy);
-    if (s.x < -30 || s.x > innerWidth+30 || s.y < -30 || s.y > innerHeight+30) continue;
-    ctx.fillText('🦋', s.x, s.y);
+
+  /* BUTTERFLIES */
+
+  for(const b of butterflies){
+
+    const wx=
+      b.baseX+
+      Math.cos(
+        t*b.speed+b.phase
+      )*b.radius;
+
+
+    const wy=
+      b.baseY+
+      Math.sin(
+        t*b.speed*1.7+b.phase
+      )*
+      b.radius*.6;
+
+
+    const s=
+      worldToScreen(
+        wx,
+        wy
+      );
+
+
+    if(
+      s.x<-30 ||
+      s.x>W+30 ||
+      s.y<-30 ||
+      s.y>H+30
+    )
+      continue;
+
+
+    ctx.font="17px serif";
+
+    ctx.fillText(
+      "🦋",
+      s.x,
+      s.y
+    );
+
   }
 
-  const tl = worldToScreen(0,0), br = worldToScreen(world.w, world.h);
-  ctx.strokeStyle = '#ff3b3b'; ctx.lineWidth = 4;
-  ctx.strokeRect(tl.x, tl.y, br.x-tl.x, br.y-tl.y);
 
-  for (const f of state.foods){
-    const s = worldToScreen(f.x, f.y);
-    const v = FOOD_VISUAL[f.key] || FOOD_VISUAL.grass;
-    if (v.emoji){
-      ctx.font = '20px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
-      ctx.fillText(v.emoji, s.x, s.y);
-    } else {
-      ctx.fillStyle = v.color; ctx.beginPath(); ctx.arc(s.x, s.y, 4, 0, 7); ctx.fill();
-    }
+  /* BORDER */
+
+  drawWorldBorder();
+
+
+  /* FOOD */
+
+  for(const f of state.foods||[])
+    drawFood(f,t);
+
+
+  /* PLAYERS */
+
+  for(const p of state.players||[]){
+
+    if(!p.alive)
+      continue;
+
+
+    if(p.role==="wolf")
+      drawChain(
+        p,
+        false,
+        t,
+        true
+      );
+    else
+      drawChain(
+        p,
+        p.id===myId,
+        t,
+        false
+      );
+
   }
 
-  for (const p of state.players){
-    if (!p.alive) continue;
-    if (p.role === 'wolf') drawWolf(p, t); else drawSheep(p, p.id === myId, t);
+
+  /* PARTICLES */
+
+  updateParticles();
+  drawParticles();
+
+
+  /* BOOST SCREEN EFFECT */
+
+  if(
+    me &&
+    me.boostMsLeft>0
+  ){
+
+    const pulse=
+      .5+
+      Math.sin(t*8)*.5;
+
+
+    ctx.fillStyle=
+      `rgba(255,220,30,${.025*pulse})`;
+
+
+    ctx.fillRect(
+      0,
+      0,
+      W,
+      H
+    );
+
   }
 
-  // leaderboard now comes straight from the server (it tracks the global top 8 —
-  // each client only receives nearby players, so we can't compute this locally anymore)
-  const top = state.leaderboard || [];
-  document.getElementById('lbList').innerHTML = top.map(p =>
-    `<li style="color:${p.id===myId?'#ffd23f':'#fff'}">${p.role==='wolf'?'🐺':'🐑'} ${p.flag} ${p.name} — ${p.mass}</li>`
-  ).join('');
 
   requestAnimationFrame(draw);
+
 }
+
 draw();
+
 </script>
 </body>
 </html>
+```
