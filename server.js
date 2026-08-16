@@ -1,814 +1,238 @@
-const http = require("http");
-const fs = require("fs");
-const path = require("path");
-const WebSocket = require("ws");
+// server.js — Authoritative multiplayer worm-io game server
+const express = require('express');
+const http = require('http');
+const path = require('path');
+const { Server } = require('socket.io');
 
-const PORT = process.env.PORT || 3000;
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: { origin: '*' }
+});
 
-const WORLD = {
-  w: 6000,
-  h: 6000
-};
+app.use(express.static(path.join(__dirname, 'public')));
 
-const HUNGER_TIME = 300000;
+// ---------- CONFIG ----------
+const WORLD_SIZE = 4000;          // world is WORLD_SIZE x WORLD_SIZE
+const FOOD_COUNT = 800;           // ambient food orbs kept on the map
+const TICK_RATE = 33;             // ms per tick (~30fps)
+const BASE_SPEED = 3.2;
+const BOOST_SPEED = 6.0;
+const TURN_RATE = 0.14;           // max radians per tick
+const START_LENGTH = 12;          // starting number of segments
+const SEGMENT_SPACING = 8;        // distance between segments
+const FOOD_RADIUS = 5;
+const EAT_DISTANCE = 16;
+const BOOST_COST_TICKS = 6;       // lose 1 segment every N ticks while boosting
 
-const players = new Map();
-const foods = [];
+// ---------- STATE ----------
+const players = {};   // socket.id -> player object
+const food = [];      // {id, x, y, r, color}
+let foodIdCounter = 0;
 
-let nextPlayerId = 1;
-let nextFoodId = 1;
-
-/* =========================
-   FOOD
-========================= */
-
-const FOOD = {
-  grass:   { value: 5 },
-  apple:   { value: 15 },
-  corn:    { value: 20 },
-  noodles: { value: 25 },
-  momo:    { value: 30 },
-  sushi:   { value: 35 },
-  sashimi: { value: 40 },
-  burger:  { value: 60 },
-  pizza:   { value: 70 },
-  donut:   { value: 80 },
-
-  golden:  { value: 150, effect: "golden" },
-  energy:  { value: 25, effect: "energy" },
-  turbo:   { value: 20, effect: "turbo" },
-  eagleeye:{ value: 15, effect: "radar" },
-  shield:  { value: 15, effect: "shield" },
-  magnet:  { value: 15, effect: "magnet" }
-};
-
-const normalFood = [
-  "grass",
-  "apple",
-  "apple",
-  "corn",
-  "corn",
-  "noodles",
-  "momo",
-  "sushi",
-  "sashimi",
-  "burger",
-  "pizza",
-  "donut"
-];
-
-function random(min, max) {
-  return Math.random() * (max - min) + min;
+function rand(min, max) { return Math.random() * (max - min) + min; }
+function randomColor() {
+  const colors = ['#ff5e5e', '#5ecbff', '#5eff8f', '#ffe65e', '#c95eff', '#ff9d5e', '#5effe6', '#ff5ec4'];
+  return colors[Math.floor(Math.random() * colors.length)];
 }
 
-function randomInt(min, max) {
-  return Math.floor(random(min, max + 1));
-}
-
-function randomFood() {
-  const r = Math.random();
-
-  if (r < 0.01) return "golden";
-  if (r < 0.025) return "energy";
-  if (r < 0.04) return "turbo";
-  if (r < 0.055) return "eagleeye";
-  if (r < 0.07) return "shield";
-  if (r < 0.085) return "magnet";
-
-  return normalFood[randomInt(0, normalFood.length - 1)];
-}
-
-function spawnFood(x, y, key) {
-  if (foods.length >= 1000) return;
-
-  const foodKey = key || randomFood();
-
-  foods.push({
-    id: nextFoodId++,
-    x: x === undefined ? random(30, WORLD.w - 30) : x,
-    y: y === undefined ? random(30, WORLD.h - 30) : y,
-    key: foodKey
-  });
-}
-
-/* Fill world with food */
-
-for (let i = 0; i < 1000; i++) {
-  spawnFood();
-}
-
-/* =========================
-   PLAYER
-========================= */
-
-function createPlayer(ws) {
-  let sheep = 0;
-  let wolves = 0;
-
-  for (const p of players.values()) {
-    if (p.role === "sheep") sheep++;
-    if (p.role === "wolf") wolves++;
-  }
-
-  let role;
-
-  if (sheep === 0) {
-    role = "sheep";
-  } else if (wolves === 0) {
-    role = "wolf";
-  } else {
-    role = sheep <= wolves ? "sheep" : "wolf";
-  }
-
-  const player = {
-    id: String(nextPlayerId++),
-
-    name: role === "wolf" ? "Wolf" : "Sheep",
-    flag: "🌍",
-
-    role: role,
-    alive: true,
-
-    x: random(300, WORLD.w - 300),
-    y: random(300, WORLD.h - 300),
-
-    dx: 0,
-    dy: 0,
-
-    mass: role === "wolf" ? 250 : 100,
-
-    hungerMs: HUNGER_TIME,
-
-    boostMsLeft: 0,
-    boostType: null,
-
-    visionMsLeft: 0,
-    shieldMsLeft: 0,
-    magnetMsLeft: 0,
-
-    shadow: false,
-
-    kills: 0,
-
-    ws: ws
-  };
-
-  players.set(player.id, player);
-
-  return player;
-}
-
-/* =========================
-   PLAYER RADIUS
-========================= */
-
-function getRadius(player) {
-  const base = player.role === "wolf" ? 22 : 14;
-
-  const scale = Math.min(
-    1 + player.mass / (player.role === "wolf" ? 4000 : 20000),
-    player.role === "wolf" ? 3.2 : 2.4
-  );
-
-  return base * scale;
-}
-
-/* =========================
-   MOVEMENT
-========================= */
-
-function movePlayer(player) {
-  if (!player.alive) return;
-
-  let dx = Number(player.dx) || 0;
-  let dy = Number(player.dy) || 0;
-
-  const length = Math.hypot(dx, dy);
-
-  if (length > 0) {
-    dx /= length;
-    dy /= length;
-  }
-
-  let speed =
-    player.role === "wolf"
-      ? 4.8
-      : 4.2;
-
-  if (player.boostMsLeft > 0) {
-    speed *= 1.65;
-  }
-
-  player.x += dx * speed;
-  player.y += dy * speed;
-
-  const r = getRadius(player);
-
-  player.x = Math.max(
-    r,
-    Math.min(WORLD.w - r, player.x)
-  );
-
-  player.y = Math.max(
-    r,
-    Math.min(WORLD.h - r, player.y)
-  );
-}
-
-/* =========================
-   FOOD
-========================= */
-
-function eatFood(player) {
-  if (!player.alive) return;
-
-  const radius = getRadius(player);
-
-  for (let i = foods.length - 1; i >= 0; i--) {
-    const food = foods[i];
-
-    const d = Math.hypot(
-      player.x - food.x,
-      player.y - food.y
-    );
-
-    if (d > radius + 20) continue;
-
-    const data = FOOD[food.key] || FOOD.grass;
-
-    player.mass += data.value;
-
-    player.hungerMs = HUNGER_TIME;
-
-    if (data.effect === "golden") {
-      player.boostMsLeft = 300000;
-      player.boostType = "golden";
-    }
-
-    if (data.effect === "energy") {
-      player.boostMsLeft = 300000;
-      player.boostType = "energy";
-    }
-
-    if (data.effect === "turbo") {
-      player.boostMsLeft = 300000;
-      player.boostType = "turbo";
-    }
-
-    if (data.effect === "radar") {
-      player.visionMsLeft = 300000;
-    }
-
-    if (data.effect === "shield") {
-      player.shieldMsLeft = 300000;
-    }
-
-    if (data.effect === "magnet") {
-      player.magnetMsLeft = 300000;
-    }
-
-    foods.splice(i, 1);
-
-    spawnFood();
+function spawnFood(count) {
+  for (let i = 0; i < count; i++) {
+    food.push({
+      id: foodIdCounter++,
+      x: rand(0, WORLD_SIZE),
+      y: rand(0, WORLD_SIZE),
+      r: FOOD_RADIUS,
+      color: randomColor()
+    });
   }
 }
+spawnFood(FOOD_COUNT);
 
-/* =========================
-   TIMERS
-========================= */
-
-function updateTimers(player) {
-  if (!player.alive) return;
-
-  player.hungerMs -= 1000 / 30;
-
-  if (player.boostMsLeft > 0) {
-    player.boostMsLeft -= 1000 / 30;
-
-    if (player.boostMsLeft <= 0) {
-      player.boostMsLeft = 0;
-      player.boostType = null;
-    }
+function spawnPlayer(name) {
+  const x = rand(WORLD_SIZE * 0.2, WORLD_SIZE * 0.8);
+  const y = rand(WORLD_SIZE * 0.2, WORLD_SIZE * 0.8);
+  const angle = rand(0, Math.PI * 2);
+  const segments = [];
+  for (let i = 0; i < START_LENGTH; i++) {
+    segments.push({ x: x - Math.cos(angle) * i * SEGMENT_SPACING, y: y - Math.sin(angle) * i * SEGMENT_SPACING });
   }
-
-  if (player.visionMsLeft > 0) {
-    player.visionMsLeft -= 1000 / 30;
-  }
-
-  if (player.shieldMsLeft > 0) {
-    player.shieldMsLeft -= 1000 / 30;
-  }
-
-  if (player.magnetMsLeft > 0) {
-    player.magnetMsLeft -= 1000 / 30;
-  }
-
-  if (player.hungerMs <= 0) {
-    killPlayer(player);
-  }
-}
-
-/* =========================
-   KILL PLAYER
-========================= */
-
-function killPlayer(player, killer) {
-  if (!player.alive) return;
-
-  player.alive = false;
-
-  /*
-     Drop food when player dies.
-  */
-
-  const pieces = Math.min(
-    60,
-    Math.floor(player.mass / 10)
-  );
-
-  for (let i = 0; i < pieces; i++) {
-    const angle = Math.random() * Math.PI * 2;
-    const distance = random(20, 120);
-
-    spawnFood(
-      player.x + Math.cos(angle) * distance,
-      player.y + Math.sin(angle) * distance,
-      randomFood()
-    );
-  }
-
-  if (killer && killer.alive) {
-    killer.kills++;
-    killer.mass += Math.floor(player.mass * 0.25);
-  }
-
-  setTimeout(() => {
-    if (players.has(player.id)) {
-      respawn(player);
-    }
-  }, 3000);
-}
-
-/* =========================
-   RESPAWN
-========================= */
-
-function respawn(player) {
-  player.alive = true;
-
-  player.x = random(300, WORLD.w - 300);
-  player.y = random(300, WORLD.h - 300);
-
-  player.mass =
-    player.role === "wolf"
-      ? 250
-      : 100;
-
-  player.hungerMs = HUNGER_TIME;
-
-  player.boostMsLeft = 0;
-  player.boostType = null;
-
-  player.visionMsLeft = 0;
-  player.shieldMsLeft = 0;
-  player.magnetMsLeft = 0;
-
-  player.dx = 0;
-  player.dy = 0;
-}
-
-/* =========================
-   COLLISIONS
-========================= */
-
-function collisions() {
-  const list = [...players.values()]
-    .filter(p => p.alive);
-
-  for (let i = 0; i < list.length; i++) {
-    for (let j = i + 1; j < list.length; j++) {
-      const a = list[i];
-      const b = list[j];
-
-      const d = Math.hypot(
-        a.x - b.x,
-        a.y - b.y
-      );
-
-      if (
-        d >
-        (getRadius(a) + getRadius(b)) * 0.7
-      ) {
-        continue;
-      }
-
-      if (
-        a.shieldMsLeft > 0 ||
-        b.shieldMsLeft > 0
-      ) {
-        continue;
-      }
-
-      /*
-         Wolf catches sheep.
-      */
-
-      if (
-        a.role === "wolf" &&
-        b.role === "sheep"
-      ) {
-        if (a.mass >= b.mass * 0.55) {
-          killPlayer(b, a);
-        }
-        continue;
-      }
-
-      if (
-        b.role === "wolf" &&
-        a.role === "sheep"
-      ) {
-        if (b.mass >= a.mass * 0.55) {
-          killPlayer(a, b);
-        }
-        continue;
-      }
-    }
-  }
-}
-
-/* =========================
-   LEADERBOARD
-========================= */
-
-function leaderboard() {
-  return [...players.values()]
-    .filter(p => p.alive)
-    .sort((a, b) => b.mass - a.mass)
-    .slice(0, 8)
-    .map(p => ({
-      id: p.id,
-      name: p.name,
-      flag: p.flag,
-      role: p.role,
-      mass: Math.floor(p.mass)
-    }));
-}
-
-/* =========================
-   SERIALIZE PLAYER
-========================= */
-
-function serializePlayer(p) {
   return {
-    id: p.id,
-    name: p.name,
-    flag: p.flag,
-
-    role: p.role,
-    alive: p.alive,
-
-    x: p.x,
-    y: p.y,
-
-    mass: Math.floor(p.mass),
-
-    hungerMs: Math.max(
-      0,
-      Math.floor(p.hungerMs)
-    ),
-
-    boostMsLeft: Math.max(
-      0,
-      Math.floor(p.boostMsLeft)
-    ),
-
-    boostType: p.boostType,
-
-    visionMsLeft: Math.max(
-      0,
-      Math.floor(p.visionMsLeft)
-    ),
-
-    shieldMsLeft: Math.max(
-      0,
-      Math.floor(p.shieldMsLeft)
-    ),
-
-    magnetMsLeft: Math.max(
-      0,
-      Math.floor(p.magnetMsLeft)
-    ),
-
-    shadow: p.shadow
+    name: name && name.trim() ? name.trim().slice(0, 16) : 'Worm',
+    color: randomColor(),
+    angle,
+    targetAngle: angle,
+    speed: BASE_SPEED,
+    boosting: false,
+    boostTick: 0,
+    segments,
+    alive: true,
+    score: START_LENGTH
   };
 }
 
-/* =========================
-   SEND STATE
-========================= */
-
-function sendState(player) {
-  if (
-    !player.ws ||
-    player.ws.readyState !== WebSocket.OPEN
-  ) {
-    return;
-  }
-
-  const nearbyPlayers = [];
-
-  for (const p of players.values()) {
-    if (!p.alive) continue;
-
-    const d = Math.hypot(
-      p.x - player.x,
-      p.y - player.y
-    );
-
-    if (d <= 3200) {
-      nearbyPlayers.push(
-        serializePlayer(p)
-      );
-    }
-  }
-
-  const nearbyFood = foods
-    .filter(food => {
-      return (
-        Math.abs(food.x - player.x) <= 3200 &&
-        Math.abs(food.y - player.y) <= 3200
-      );
-    })
-    .map(food => ({
-      id: food.id,
-      x: food.x,
-      y: food.y,
-      key: food.key,
-      value:
-        (FOOD[food.key] || FOOD.grass).value
-    }));
-
-  let kingSheep = null;
-  let kingWolf = null;
-
-  for (const p of players.values()) {
-    if (!p.alive) continue;
-
-    if (
-      p.role === "sheep" &&
-      (!kingSheep || p.mass > kingSheep.mass)
-    ) {
-      kingSheep = p;
-    }
-
-    if (
-      p.role === "wolf" &&
-      (!kingWolf || p.mass > kingWolf.mass)
-    ) {
-      kingWolf = p;
-    }
-  }
-
-  const message = {
-    type: "state",
-
-    players: nearbyPlayers,
-
-    foods: nearbyFood,
-
-    kingSheepId:
-      kingSheep ? kingSheep.id : null,
-
-    kingWolfId:
-      kingWolf ? kingWolf.id : null,
-
-    leaderboard: leaderboard()
-  };
-
-  try {
-    player.ws.send(
-      JSON.stringify(message)
-    );
-  } catch (e) {
-    console.log("Send error:", e.message);
-  }
+function dist2(ax, ay, bx, by) {
+  const dx = ax - bx, dy = ay - by;
+  return dx * dx + dy * dy;
 }
 
-/* =========================
-   HTTP SERVER
-========================= */
-
-const server = http.createServer(
-  (req, res) => {
-
-    if (req.url === "/health") {
-      res.writeHead(200, {
-        "Content-Type":
-          "application/json"
-      });
-
-      res.end(
-        JSON.stringify({
-          status: "online",
-          players: players.size
-        })
-      );
-
-      return;
-    }
-
-    const filePath =
-      path.join(
-        __dirname,
-        "index.html"
-      );
-
-    fs.readFile(
-      filePath,
-      (error, data) => {
-
-        if (error) {
-          res.writeHead(500, {
-            "Content-Type":
-              "text/plain"
-          });
-
-          res.end(
-            "index.html not found"
-          );
-
-          return;
-        }
-
-        res.writeHead(200, {
-          "Content-Type":
-            "text/html"
-        });
-
-        res.end(data);
-      }
-    );
+function killPlayer(id) {
+  const p = players[id];
+  if (!p || !p.alive) return;
+  p.alive = false;
+  // turn every other body segment into food
+  for (let i = 0; i < p.segments.length; i += 2) {
+    const s = p.segments[i];
+    food.push({ id: foodIdCounter++, x: s.x, y: s.y, r: FOOD_RADIUS + 2, color: p.color });
   }
-);
+  io.to(id).emit('dead', { score: p.score });
+}
 
-/* =========================
-   WEBSOCKET
-========================= */
-
-const wss =
-  new WebSocket.Server({
-    server: server
+// ---------- SOCKET HANDLING ----------
+io.on('connection', (socket) => {
+  socket.on('join', (data) => {
+    players[socket.id] = spawnPlayer(data && data.name);
   });
 
-wss.on("connection", ws => {
-
-  const player =
-    createPlayer(ws);
-
-  console.log(
-    "Player connected:",
-    player.id,
-    player.role
-  );
-
-  ws.send(
-    JSON.stringify({
-      type: "welcome",
-
-      id: player.id,
-
-      world: WORLD,
-
-      hungerLimitMs:
-        HUNGER_TIME
-    })
-  );
-
-  ws.on("message", data => {
-
-    try {
-
-      const message =
-        JSON.parse(
-          data.toString()
-        );
-
-      if (
-        message.type !== "input"
-      ) {
-        return;
-      }
-
-      player.dx =
-        Number(message.dx) || 0;
-
-      player.dy =
-        Number(message.dy) || 0;
-
-    } catch (error) {
-
-      console.log(
-        "Invalid message"
-      );
+  socket.on('input', (data) => {
+    const p = players[socket.id];
+    if (!p || !p.alive) return;
+    if (typeof data.angle === 'number' && !isNaN(data.angle)) {
+      p.targetAngle = data.angle;
     }
+    p.boosting = !!data.boosting;
   });
 
-  ws.on("close", () => {
-
-    players.delete(
-      player.id
-    );
-
-    console.log(
-      "Player disconnected:",
-      player.id
-    );
+  socket.on('respawn', (data) => {
+    players[socket.id] = spawnPlayer(data && data.name);
   });
 
-  ws.on("error", () => {
-
-    players.delete(
-      player.id
-    );
+  socket.on('disconnect', () => {
+    delete players[socket.id];
   });
 });
 
-/* =========================
-   GAME LOOP
-========================= */
+// ---------- GAME LOOP ----------
+function tick() {
+  const ids = Object.keys(players);
 
-setInterval(() => {
+  for (const id of ids) {
+    const p = players[id];
+    if (!p.alive) continue;
 
-  for (const player of players.values()) {
+    // turn head gradually toward targetAngle (shortest direction)
+    let diff = p.targetAngle - p.angle;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    diff = Math.max(-TURN_RATE, Math.min(TURN_RATE, diff));
+    p.angle += diff;
 
-    if (!player.alive) continue;
+    // boosting shrinks the worm slowly, speeds it up
+    if (p.boosting && p.segments.length > START_LENGTH) {
+      p.speed = BOOST_SPEED;
+      p.boostTick++;
+      if (p.boostTick >= BOOST_COST_TICKS) {
+        p.boostTick = 0;
+        const tail = p.segments.pop();
+        p.score = Math.max(START_LENGTH, p.score - 1);
+        food.push({ id: foodIdCounter++, x: tail.x, y: tail.y, r: FOOD_RADIUS, color: p.color });
+      }
+    } else {
+      p.speed = BASE_SPEED;
+    }
 
-    movePlayer(player);
+    const head = p.segments[0];
+    const nx = head.x + Math.cos(p.angle) * p.speed;
+    const ny = head.y + Math.sin(p.angle) * p.speed;
 
-    eatFood(player);
+    // world boundary: wrap-free, hitting the edge kills you (classic io behavior)
+    if (nx < 0 || nx > WORLD_SIZE || ny < 0 || ny > WORLD_SIZE) {
+      killPlayer(id);
+      continue;
+    }
 
-    updateTimers(player);
+    p.segments.unshift({ x: nx, y: ny });
+    p.segments.pop(); // remove tail unless we grow this tick (handled in eating below)
+
+    // eating food
+    for (let i = food.length - 1; i >= 0; i--) {
+      const f = food[i];
+      if (dist2(nx, ny, f.x, f.y) < EAT_DISTANCE * EAT_DISTANCE) {
+        food.splice(i, 1);
+        // grow: duplicate tail segment
+        const tail = p.segments[p.segments.length - 1];
+        p.segments.push({ x: tail.x, y: tail.y });
+        p.score += 1;
+      }
+    }
   }
 
-  collisions();
-
-}, 1000 / 30);
-
-/* =========================
-   SEND GAME STATE
-========================= */
-
-setInterval(() => {
-
-  for (const player of players.values()) {
-    sendState(player);
+  // replenish food that was eaten
+  if (food.length < FOOD_COUNT) {
+    spawnFood(Math.min(20, FOOD_COUNT - food.length));
   }
 
-}, 1000 / 15);
-
-/* =========================
-   KEEP FOOD FULL
-========================= */
-
-setInterval(() => {
-
-  while (foods.length < 1000) {
-    spawnFood();
+  // collision: head vs other worms' bodies
+  for (const id of ids) {
+    const p = players[id];
+    if (!p.alive) continue;
+    const head = p.segments[0];
+    for (const otherId of ids) {
+      const o = players[otherId];
+      if (!o.alive) continue;
+      const startIdx = otherId === id ? 6 : 0; // ignore own first few segments (avoid instant self-death on turns)
+      for (let i = startIdx; i < o.segments.length; i++) {
+        const s = o.segments[i];
+        if (dist2(head.x, head.y, s.x, s.y) < (EAT_DISTANCE * 0.7) * (EAT_DISTANCE * 0.7)) {
+          killPlayer(id);
+          break;
+        }
+      }
+      if (!p.alive) break;
+    }
   }
 
-}, 1000);
+  broadcastState();
+}
 
-/* =========================
-   START SERVER
-========================= */
+function broadcastState() {
+  const ids = Object.keys(players);
+  const leaderboard = ids
+    .filter(id => players[id].alive)
+    .map(id => ({ id, name: players[id].name, score: players[id].score }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 10);
 
-server.listen(
-  PORT,
-  "0.0.0.0",
-  () => {
+  for (const id of ids) {
+    const me = players[id];
+    if (!me || !me.alive) {
+      io.to(id).emit('state', { you: null, worms: [], food: [], leaderboard });
+      continue;
+    }
+    // send everything (simple approach — fine for small/medium player counts)
+    const worms = ids
+      .filter(oid => players[oid].alive)
+      .map(oid => ({
+        id: oid,
+        name: players[oid].name,
+        color: players[oid].color,
+        segments: players[oid].segments,
+        score: players[oid].score
+      }));
 
-    console.log(
-      "================================"
-    );
-
-    console.log(
-      "🐑 FLOCK.IO SERVER STARTED"
-    );
-
-    console.log(
-      "PORT:",
-      PORT
-    );
-
-    console.log(
-      "WORLD:",
-      WORLD.w,
-      "x",
-      WORLD.h
-    );
-
-    console.log(
-      "================================"
-    );
+    io.to(id).emit('state', {
+      you: { x: me.segments[0].x, y: me.segments[0].y, score: me.score, angle: me.angle },
+      worms,
+      food,
+      leaderboard,
+      worldSize: WORLD_SIZE
+    });
   }
-);
+}
+
+setInterval(tick, TICK_RATE);
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+  console.log(`Worm game server running on port ${PORT}`);
+});
