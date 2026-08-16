@@ -1,413 +1,2158 @@
-// ============================================================
-// Flock.io — Authoritative Multiplayer Server (spatial-grid edition)
-// Plain Node.js + ws — server decides everything, client only renders it
-//
-// PERFORMANCE MODEL (important — read this if you tune numbers below):
-// - A spatial hash grid (SpatialGrid) buckets players/food by cell so
-//   collision + AI checks only look at nearby cells, not the whole world.
-//   This is what lets population scale without O(n²) cost.
-// - Each connected human only receives players/food within NETWORK_RADIUS
-//   of themselves, not the entire map. That keeps the JSON payload (and
-//   the client's rendering work) small no matter how many bots exist.
-// - Bots recompute their AI decision only once every AI_INTERVAL_TICKS
-//   ticks (staggered by aiOffset so they don't all think on the same
-//   tick). Movement itself still updates every tick — it's just cheap.
-// - BOT_COUNT is tuned for Render's free tier (0.1 CPU / 512MB). Raise
-//   it once you're on a paid instance — nothing else needs to change.
-// ============================================================
-const express = require('express');
-const http = require('http');
-const WebSocket = require('ws');
-const path = require('path');
+```javascript
+const http = require("http");
+const WebSocket = require("ws");
+
+/*
+============================================================
+FLOCK.IO
+WORMATE-STYLE MULTIPLAYER SERVER
+============================================================
+
+Run:
+
+    npm install ws
+    node server.js
+
+The server provides:
+
+- WebSocket multiplayer
+- Sheep / Wolf roles
+- Worm movement
+- Food
+- Growth
+- Hunger
+- Powerups
+- Boost
+- Radar
+- Shield
+- Magnet
+- Shadow
+- Collision
+- Death
+- Food drops
+- Leaderboard
+- King system
+============================================================
+*/
+
+
+/* ============================================================
+   SERVER
+============================================================ */
 
 const PORT = process.env.PORT || 3000;
-const WORLD = { w: 6000, h: 6000 };
-const TICK_MS = 50;                       // 20 ticks/sec
-const HUNGER_LIMIT_MS = 5 * 60 * 1000;    // 5 minutes — sheep AND wolves
-const BUFF_DURATION_MS = 5 * 60 * 1000;   // energy/turbo/eagle-eye/shield/magnet
-const GOLDEN_DURATION_MS = 20 * 1000;     // legendary Golden Apple stays short
-const SHADOW_DURATION_MS = 10 * 60 * 1000;
-const FOOD_TARGET = 400;
-const SHEEP_RATIO = 0.70;
 
-const BOT_COUNT = 300;                    // fake players that keep the world feeling alive
-const GRID_CELL = 220;                    // spatial hash cell size (world units)
-const NETWORK_RADIUS = 1800;              // how far each human can "see" over the network
-const AI_INTERVAL_TICKS = 6;              // bots re-decide every ~300ms, staggered
+const server = http.createServer((req, res) => {
 
-const NAMES = ['Fares','Layla','Omar','Ivy','Noor','Kenji','Diego','Aisha','Milo','Tariq',
-               'Sofia','Yusuf','Mei','Karim','Elif','Zane','Rania','Hugo','Amara','Bilal',
-               'Nadia','Ravi','Lucia','Sam','Priya','Omer','Farah','Leo','Hana','Adam'];
-const FLAGS = ['🇯🇴','🇦🇪','🇺🇸','🇷🇺','🇧🇷','🇰🇷','🇪🇬','🇬🇧','🇫🇷','🇮🇳','🇯🇵','🇲🇽','🇹🇷','🇩🇪','🇨🇦'];
+    if (req.url === "/health") {
 
-const FOOD_TYPES = [
-  { key:'grass',   val:2,  weight:30 },
-  { key:'apple',   val:4,  weight:12 },
-  { key:'corn',    val:4,  weight:9  },
-  { key:'noodles', val:8,  weight:8  },
-  { key:'momo',    val:8,  weight:8  },
-  { key:'sushi',   val:6,  weight:8  },
-  { key:'sashimi', val:7,  weight:6  },
-  { key:'burger',  val:10, weight:5  },
-  { key:'pizza',   val:10, weight:5  },
-  { key:'donut',   val:8,  weight:5  },
-  { key:'golden',  val:30, weight:2, buff:'golden' },
-  { key:'energy',  val:15, weight:3, buff:'energy' },
-  { key:'turbo',   val:12, weight:2, buff:'turbo'  },
-  { key:'eagleeye',val:10, weight:2, buff:'vision' },
-  { key:'shield',  val:10, weight:2, buff:'shield' },
-  { key:'magnet',  val:10, weight:2, buff:'magnet' },
-];
-const TOTAL_WEIGHT = FOOD_TYPES.reduce((a,f) => a + f.weight, 0);
-function pickFoodType(){
-  let r = Math.random() * TOTAL_WEIGHT;
-  for (const f of FOOD_TYPES){ if (r < f.weight) return f; r -= f.weight; }
-  return FOOD_TYPES[0];
-}
+        res.writeHead(200, {
+            "Content-Type": "application/json"
+        });
 
-function randomId(){ return Math.random().toString(36).slice(2, 10); }
-function speedFor(mass){ return Math.max(1.6, 7.2 - Math.log(mass + 10) * 0.5); }
-function radiusFor(mass, isWolf){
-  const base = isWolf ? 22 : 14;
-  const scale = Math.min(1 + mass / (isWolf ? 4000 : 20000), isWolf ? 3.2 : 2.4);
-  return base * scale;
-}
+        res.end(JSON.stringify({
+            ok: true,
+            players: players.size,
+            food: foods.length
+        }));
 
-// ---------------- spatial hash grid ----------------
-// Buckets entities by cell so "who's near X" is a handful of lookups
-// instead of scanning every entity in the game.
-class SpatialGrid {
-  constructor(cellSize){ this.cellSize = cellSize; this.cells = new Map(); }
-  _key(cx, cy){ return cx + '_' + cy; }
-  clear(){ this.cells.clear(); }
-  insert(item, x, y){
-    const cx = Math.floor(x / this.cellSize), cy = Math.floor(y / this.cellSize);
-    const k = this._key(cx, cy);
-    let bucket = this.cells.get(k);
-    if (!bucket){ bucket = []; this.cells.set(k, bucket); }
-    bucket.push(item);
-  }
-  near(x, y, radius){
-    const out = [];
-    const cr = Math.ceil(radius / this.cellSize);
-    const cx = Math.floor(x / this.cellSize), cy = Math.floor(y / this.cellSize);
-    for (let dx = -cr; dx <= cr; dx++){
-      for (let dy = -cr; dy <= cr; dy++){
-        const bucket = this.cells.get(this._key(cx + dx, cy + dy));
-        if (bucket) for (const it of bucket) out.push(it);
-      }
+        return;
     }
-    return out;
-  }
-}
-const foodGrid = new SpatialGrid(GRID_CELL);
-const playerGrid = new SpatialGrid(GRID_CELL);
-function rebuildGrids(){
-  foodGrid.clear();
-  for (const f of foods.values()) foodGrid.insert(f, f.x, f.y);
-  playerGrid.clear();
-  for (const p of players.values()) if (p.alive) playerGrid.insert(p, p.x, p.y);
-}
 
-// ---------------- game state ----------------
-const players = new Map();
-const foods = new Map();
-
-function spawnFood(){
-  const type = pickFoodType();
-  const id = randomId();
-  foods.set(id, { id, x: Math.random()*WORLD.w, y: Math.random()*WORLD.h, key: type.key, val: type.val, buff: type.buff || null });
-}
-for (let i=0;i<FOOD_TARGET;i++) spawnFood();
-
-// ---------------- population balancer ----------------
-function assignRole(excludingId){
-  let sheepCount = 0, wolfCount = 0;
-  for (const p of players.values()){
-    if (excludingId && p.id === excludingId) continue;
-    if (p.role === 'sheep') sheepCount++; else if (p.role === 'wolf') wolfCount++;
-  }
-  const total = sheepCount + wolfCount;
-  if (total === 0) return 'sheep';
-  return (sheepCount/total) < SHEEP_RATIO ? 'sheep' : 'wolf';
-}
-
-function freshPlayer(id, ws, isBot){
-  const role = assignRole(id);
-  return {
-    id, ws, role, isBot: !!isBot,
-    name: NAMES[Math.floor(Math.random()*NAMES.length)],
-    flag: FLAGS[Math.floor(Math.random()*FLAGS.length)],
-    x: Math.random()*WORLD.w, y: Math.random()*WORLD.h,
-    mass: role === 'wolf' ? 260 : 20,
-    alive: true, dirX: 0, dirY: 0, lastAte: Date.now(),
-    boostType: null, boostMult: 1, boostUntil: 0,
-    visionUntil: 0, shieldUntil: 0, magnetUntil: 0, shadowUntil: 0,
-    aiOffset: Math.floor(Math.random()*AI_INTERVAL_TICKS),
-    wanderDirX: Math.random()*2-1, wanderDirY: Math.random()*2-1,
-  };
-}
-
-function respawn(p){
-  p.role = assignRole(p.id);
-  p.mass = p.role === 'wolf' ? 260 : 20;
-  p.x = Math.random()*WORLD.w; p.y = Math.random()*WORLD.h;
-  p.alive = true; p.lastAte = Date.now();
-  p.boostType = null; p.boostMult = 1; p.boostUntil = 0;
-  p.visionUntil = 0; p.shieldUntil = 0; p.magnetUntil = 0; p.shadowUntil = 0;
-  p.wanderDirX = Math.random()*2-1; p.wanderDirY = Math.random()*2-1;
-}
-
-// ---------------- bots ----------------
-function spawnBot(){
-  const id = 'bot_' + randomId();
-  const p = freshPlayer(id, null, true);
-  players.set(id, p);
-}
-for (let i=0;i<BOT_COUNT;i++) spawnBot();
-
-const BORDER_MARGIN = 260; // bots start steering away from the edge this far out (dying at the edge is now instant)
-function updateBotAI(p){
-  if (p.role === 'sheep'){
-    const wolvesNear = playerGrid.near(p.x, p.y, 450).filter(o => o.alive && o.role === 'wolf');
-    if (wolvesNear.length){
-      let nearest = null, nd = Infinity;
-      for (const w of wolvesNear){ const d = Math.hypot(w.x-p.x, w.y-p.y); if (d < nd){ nd = d; nearest = w; } }
-      p.wanderDirX = p.x - nearest.x; p.wanderDirY = p.y - nearest.y;
-    } else {
-      const foodsNear = foodGrid.near(p.x, p.y, 400);
-      if (foodsNear.length){
-        let nearest = null, nd = Infinity;
-        for (const f of foodsNear){ const d = Math.hypot(f.x-p.x, f.y-p.y); if (d < nd){ nd = d; nearest = f; } }
-        p.wanderDirX = nearest.x - p.x; p.wanderDirY = nearest.y - p.y;
-      } else if (Math.random() < 0.3){
-        p.wanderDirX = Math.random()*2-1; p.wanderDirY = Math.random()*2-1;
-      }
-    }
-  } else {
-    const sheepNear = playerGrid.near(p.x, p.y, 600).filter(o => o.alive && o.role === 'sheep');
-    if (sheepNear.length){
-      let nearest = null, nd = Infinity;
-      for (const s of sheepNear){ const d = Math.hypot(s.x-p.x, s.y-p.y); if (d < nd){ nd = d; nearest = s; } }
-      p.wanderDirX = nearest.x - p.x; p.wanderDirY = nearest.y - p.y;
-    } else if (Math.random() < 0.3){
-      p.wanderDirX = Math.random()*2-1; p.wanderDirY = Math.random()*2-1;
-    }
-  }
-  // steer back in before the border kills them
-  if (p.x < BORDER_MARGIN) p.wanderDirX = Math.abs(p.wanderDirX) + 0.4;
-  if (p.x > WORLD.w - BORDER_MARGIN) p.wanderDirX = -Math.abs(p.wanderDirX) - 0.4;
-  if (p.y < BORDER_MARGIN) p.wanderDirY = Math.abs(p.wanderDirY) + 0.4;
-  if (p.y > WORLD.h - BORDER_MARGIN) p.wanderDirY = -Math.abs(p.wanderDirY) - 0.4;
-  p.dirX = p.wanderDirX; p.dirY = p.wanderDirY;
-}
-
-// ---------------- leaderboard (cheap top-K, no full sort) ----------------
-function topKByMass(k){
-  const top = [];
-  for (const p of players.values()){
-    if (!p.alive) continue;
-    if (top.length < k){
-      top.push(p); top.sort((a,b) => b.mass - a.mass);
-    } else if (p.mass > top[top.length-1].mass){
-      top[top.length-1] = p; top.sort((a,b) => b.mass - a.mass);
-    }
-  }
-  return top;
-}
-
-// ---------------- game loop ----------------
-let tickCount = 0;
-function tick(){
-  tickCount++;
-  const now = Date.now();
-
-  // bot decisions — throttled + staggered so not all 300 think on the same tick
-  for (const p of players.values()){
-    if (p.isBot && p.alive && (tickCount + p.aiOffset) % AI_INTERVAL_TICKS === 0){
-      updateBotAI(p);
-    }
-  }
-
-  // movement — touching the world edge is now an instant death, same as a wolf catching you
-  for (const p of players.values()){
-    if (!p.alive) continue;
-    const mag = Math.hypot(p.dirX, p.dirY) || 1;
-    const boostMult = now < p.boostUntil ? p.boostMult : 1;
-    const shadowMult = (p.role === 'wolf' && now < p.shadowUntil) ? 1.35 : 1;
-    const roleMult = p.role === 'wolf' ? 1.15 : 1;
-    const spd = speedFor(p.mass) * boostMult * shadowMult * roleMult;
-    const nx = p.x + (p.dirX/mag)*spd;
-    const ny = p.y + (p.dirY/mag)*spd;
-    if (nx <= 0 || nx >= WORLD.w || ny <= 0 || ny >= WORLD.h){
-      p.alive = false;
-      respawn(p);
-      continue;
-    }
-    p.x = nx; p.y = ny;
-  }
-
-  // magnet — pulls nearby food toward players who have it active (grid-scoped)
-  for (const p of players.values()){
-    if (!p.alive || now >= p.magnetUntil) continue;
-    const near = foodGrid.near(p.x, p.y, 260);
-    for (const f of near){
-      const dx = p.x-f.x, dy = p.y-f.y, d = Math.hypot(dx,dy);
-      if (d < 260 && d > 1){
-        const pull = Math.min(9, d*0.15);
-        f.x += (dx/d)*pull; f.y += (dy/d)*pull;
-      }
-    }
-  }
-
-  // sheep eat food — only checks food in nearby cells, not the whole map
-  for (const p of players.values()){
-    if (!p.alive || p.role !== 'sheep') continue;
-    const r = radiusFor(p.mass, false) + 8;
-    const near = foodGrid.near(p.x, p.y, r + 40);
-    for (const f of near){
-      if (!foods.has(f.id)) continue; // already eaten earlier this tick
-      const d = Math.hypot(f.x-p.x, f.y-p.y);
-      if (d < r){
-        p.mass += f.val;
-        p.lastAte = now;
-        if (f.buff === 'golden'){ p.boostType='golden'; p.boostMult=1.5; p.boostUntil = now+GOLDEN_DURATION_MS; }
-        else if (f.buff === 'energy'){ p.boostType='energy'; p.boostMult=1.6; p.boostUntil = now+BUFF_DURATION_MS; }
-        else if (f.buff === 'turbo'){ p.boostType='turbo'; p.boostMult=1.35; p.boostUntil = now+BUFF_DURATION_MS; }
-        else if (f.buff === 'vision'){ p.visionUntil = now+BUFF_DURATION_MS; }
-        else if (f.buff === 'shield'){ p.shieldUntil = now+BUFF_DURATION_MS; }
-        else if (f.buff === 'magnet'){ p.magnetUntil = now+BUFF_DURATION_MS; }
-        foods.delete(f.id);
-        spawnFood();
-      }
-    }
-  }
-
-  // wolves eat sheep — only checks sheep in nearby cells, not every sheep in the game
-  for (const w of players.values()){
-    if (!w.alive || w.role !== 'wolf') continue;
-    const near = playerGrid.near(w.x, w.y, radiusFor(w.mass, true) + 80).filter(o => o.alive && o.role === 'sheep');
-    for (const s of near){
-      const d = Math.hypot(s.x-w.x, s.y-w.y);
-      if (d < radiusFor(w.mass,true) + radiusFor(s.mass,false)*0.6){
-        if (now < s.shieldUntil){
-          s.shieldUntil = 0;
-          s.mass = Math.max(20, s.mass*0.7);
-          const away = Math.atan2(s.y-w.y, s.x-w.x);
-          s.x = Math.max(0, Math.min(WORLD.w, s.x + Math.cos(away)*90));
-          s.y = Math.max(0, Math.min(WORLD.h, s.y + Math.sin(away)*90));
-        } else {
-          const wasGolden = s.boostType === 'golden' && now < s.boostUntil;
-          w.mass += s.mass*0.6;
-          w.lastAte = now;
-          if (wasGolden) w.shadowUntil = now + SHADOW_DURATION_MS;
-          s.alive = false;
-          respawn(s);
-        }
-        break;
-      }
-    }
-  }
-
-  // hunger — everyone, sheep or wolf, dies without eating in 5 minutes
-  for (const p of players.values()){
-    if (p.alive && now - p.lastAte > HUNGER_LIMIT_MS){
-      p.alive = false;
-      respawn(p);
-    }
-  }
-
-  // rebuild the grid with final positions — used for broadcast now, and for next tick's AI/collisions
-  rebuildGrids();
-
-  broadcastState(now);
-}
-
-function serializePlayer(p, now){
-  return {
-    id: p.id, name: p.name, flag: p.flag, role: p.role,
-    x: Math.round(p.x), y: Math.round(p.y),
-    mass: Math.round(p.mass), alive: p.alive,
-    hungerMs: Math.max(0, HUNGER_LIMIT_MS - (now - p.lastAte)),
-    boostType: now < p.boostUntil ? p.boostType : null,
-    boostMsLeft: Math.max(0, p.boostUntil - now),
-    visionMsLeft: Math.max(0, p.visionUntil - now),
-    shieldMsLeft: Math.max(0, p.shieldUntil - now),
-    magnetMsLeft: Math.max(0, p.magnetUntil - now),
-    shadow: p.role === 'wolf' && now < p.shadowUntil,
-  };
-}
-function serializeFood(f){ return { id: f.id, x: Math.round(f.x), y: Math.round(f.y), key: f.key }; }
-
-function broadcastState(now){
-  let kingSheepId = null, kingSheepMass = 0;
-  let kingWolfId = null, kingWolfMass = 0;
-  for (const p of players.values()){
-    if (!p.alive) continue;
-    if (p.role === 'sheep' && p.mass > kingSheepMass){ kingSheepMass = p.mass; kingSheepId = p.id; }
-    if (p.role === 'wolf' && p.mass > kingWolfMass){ kingWolfMass = p.mass; kingWolfId = p.id; }
-  }
-  const leaderboard = topKByMass(8).map(p => ({
-    id: p.id, name: p.name, flag: p.flag, role: p.role, mass: Math.round(p.mass),
-  }));
-
-  // each human only gets what's near them — not the whole world — so payload size
-  // (and client rendering cost) stays flat no matter how many bots exist
-  for (const me of players.values()){
-    if (!me.ws || me.ws.readyState !== WebSocket.OPEN) continue;
-
-    const nearPlayers = playerGrid.near(me.x, me.y, NETWORK_RADIUS);
-    const nearFoods = foodGrid.near(me.x, me.y, NETWORK_RADIUS);
-
-    const seen = new Set();
-    const playersOut = [];
-    for (const p of nearPlayers){
-      if (seen.has(p.id)) continue;
-      seen.add(p.id);
-      playersOut.push(serializePlayer(p, now));
-    }
-    if (!seen.has(me.id)) playersOut.push(serializePlayer(me, now));
-
-    const foodsOut = nearFoods.map(serializeFood);
-
-    const payload = JSON.stringify({
-      type: 'state', kingSheepId, kingWolfId, leaderboard,
-      players: playersOut, foods: foodsOut,
+    res.writeHead(200, {
+        "Content-Type": "text/html"
     });
-    me.ws.send(payload);
-  }
-}
 
-setInterval(tick, TICK_MS);
+    res.end(`
+        <html>
+        <head>
+            <title>Flock.io Server</title>
+        </head>
+        <body style="font-family:Arial;background:#111;color:white">
+            <h1>🐑 Flock.io Server Online</h1>
+            <p>Players: ${players.size}</p>
+            <p>Food: ${foods.length}</p>
+        </body>
+        </html>
+    `);
 
-// ---------------- networking plumbing ----------------
-const app = express();
-app.use(express.static(path.join(__dirname, 'public')));
-const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
-
-wss.on('connection', (ws) => {
-  const id = randomId();
-  const player = freshPlayer(id, ws, false);
-  players.set(id, player);
-  console.log(`Player joined: ${player.name} (${player.role}) — ${players.size} online (incl. bots)`);
-
-  ws.send(JSON.stringify({ type:'welcome', id, world: WORLD, hungerLimitMs: HUNGER_LIMIT_MS }));
-
-  ws.on('message', (raw) => {
-    let msg;
-    try { msg = JSON.parse(raw); } catch (e) { return; }
-    if (msg.type === 'input' && typeof msg.dx === 'number' && typeof msg.dy === 'number'){
-      player.dirX = msg.dx; player.dirY = msg.dy;
-    }
-  });
-
-  ws.on('close', () => {
-    players.delete(id);
-    console.log(`Player left: ${player.name} — ${players.size} online (incl. bots)`);
-  });
 });
+
+
+const wss = new WebSocket.Server({
+    server
+});
+
 
 server.listen(PORT, () => {
-  console.log(`Flock.io server running on http://localhost:${PORT}`);
+
+    console.log(`
+========================================
+🐑 FLOCK.IO SERVER
+========================================
+
+Server running on port ${PORT}
+
+WebSocket:
+ws://localhost:${PORT}
+
+========================================
+`);
+
 });
+
+
+/* ============================================================
+   WORLD
+============================================================ */
+
+const WORLD = {
+    w: 6000,
+    h: 6000
+};
+
+
+/* ============================================================
+   GAME SETTINGS
+============================================================ */
+
+const SETTINGS = {
+
+    tickRate: 30,
+
+    stateRate: 15,
+
+    maxPlayers: 500,
+
+    maxFood: 900,
+
+    startingMassSheep: 100,
+
+    startingMassWolf: 250,
+
+    sheepSpeed: 4.3,
+
+    wolfSpeed: 4.8,
+
+    boostSpeedMultiplier: 1.65,
+
+    boostDrainPerSecond: 0.35,
+
+    growthPerMass: 1,
+
+    hungerTime: 300000,
+
+    boostTime: 300000,
+
+    radarTime: 300000,
+
+    shieldTime: 300000,
+
+    magnetTime: 300000,
+
+    shadowTime: 300000,
+
+    foodDropMultiplier: 0.45,
+
+    collisionPadding: 0.7,
+
+    foodSpawnBatch: 15,
+
+    broadcastRadius: 2500
+
+};
+
+
+/* ============================================================
+   DATA
+============================================================ */
+
+const players = new Map();
+
+const foods = [];
+
+let nextPlayerId = 1;
+
+let nextFoodId = 1;
+
+
+/* ============================================================
+   FOOD TYPES
+============================================================ */
+
+const FOOD_TYPES = {
+
+    grass: {
+        value: 5,
+        color: "#78d84d",
+        chance: 30
+    },
+
+    apple: {
+        value: 15,
+        chance: 16
+    },
+
+    corn: {
+        value: 20,
+        chance: 12
+    },
+
+    noodles: {
+        value: 25,
+        chance: 8
+    },
+
+    momo: {
+        value: 30,
+        chance: 7
+    },
+
+    sushi: {
+        value: 35,
+        chance: 6
+    },
+
+    sashimi: {
+        value: 40,
+        chance: 5
+    },
+
+    burger: {
+        value: 60,
+        chance: 4
+    },
+
+    pizza: {
+        value: 70,
+        chance: 3
+    },
+
+    donut: {
+        value: 80,
+        chance: 2
+    },
+
+    golden: {
+        value: 150,
+        boost: "golden",
+        chance: 1.5
+    },
+
+    energy: {
+        value: 25,
+        boost: "energy",
+        chance: 1.5
+    },
+
+    turbo: {
+        value: 20,
+        boost: "turbo",
+        chance: 1
+    },
+
+    eagleeye: {
+        value: 15,
+        boost: "eagleeye",
+        chance: 1
+    },
+
+    shield: {
+        value: 15,
+        boost: "shield",
+        chance: 1
+    },
+
+    magnet: {
+        value: 15,
+        boost: "magnet",
+        chance: 1
+    }
+
+};
+
+
+/* ============================================================
+   UTILITIES
+============================================================ */
+
+function random(min, max) {
+
+    return Math.random() * (max - min) + min;
+
+}
+
+
+function randomInt(min, max) {
+
+    return Math.floor(
+        random(min, max + 1)
+    );
+
+}
+
+
+function distance(a, b) {
+
+    return Math.hypot(
+        a.x - b.x,
+        a.y - b.y
+    );
+
+}
+
+
+function clamp(value, min, max) {
+
+    return Math.max(
+        min,
+        Math.min(max, value)
+    );
+
+}
+
+
+function normalize(x, y) {
+
+    const length =
+        Math.hypot(x, y) || 1;
+
+    return {
+        x: x / length,
+        y: y / length
+    };
+
+}
+
+
+function createId(prefix) {
+
+    return (
+        prefix +
+        Math.random()
+            .toString(36)
+            .slice(2, 8) +
+        Date.now()
+            .toString(36)
+    );
+
+}
+
+
+/* ============================================================
+   FOOD RANDOMIZER
+============================================================ */
+
+function randomFoodType() {
+
+    const entries =
+        Object.entries(FOOD_TYPES);
+
+    let total = 0;
+
+    for (const [, type] of entries) {
+
+        total += type.chance;
+
+    }
+
+    let roll =
+        Math.random() * total;
+
+    for (const [key, type] of entries) {
+
+        roll -= type.chance;
+
+        if (roll <= 0) {
+
+            return key;
+
+        }
+
+    }
+
+    return "grass";
+
+}
+
+
+/* ============================================================
+   SPAWN FOOD
+============================================================ */
+
+function spawnFood(x, y, key) {
+
+    if (foods.length >= SETTINGS.maxFood)
+        return null;
+
+
+    const type =
+        key || randomFoodType();
+
+
+    const food = {
+
+        id: nextFoodId++,
+
+        x:
+            clamp(
+                x ?? random(40, WORLD.w - 40),
+                20,
+                WORLD.w - 20
+            ),
+
+        y:
+            clamp(
+                y ?? random(40, WORLD.h - 40),
+                20,
+                WORLD.h - 20
+            ),
+
+        key: type,
+
+        value:
+            FOOD_TYPES[type].value
+
+    };
+
+
+    foods.push(food);
+
+    return food;
+
+}
+
+
+/* ============================================================
+   INITIAL FOOD
+============================================================ */
+
+for (
+    let i = 0;
+    i < SETTINGS.maxFood;
+    i++
+) {
+
+    spawnFood();
+
+}
+
+
+/* ============================================================
+   PLAYER CREATION
+============================================================ */
+
+function createPlayer(ws) {
+
+    const id =
+        String(nextPlayerId++);
+
+
+    /*
+    Alternate roles.
+
+    You can later replace this with
+    proper role balancing.
+    */
+
+    let sheepCount = 0;
+    let wolfCount = 0;
+
+    for (const p of players.values()) {
+
+        if (p.role === "sheep")
+            sheepCount++;
+
+        if (p.role === "wolf")
+            wolfCount++;
+
+    }
+
+
+    let role;
+
+    if (sheepCount === 0) {
+
+        role = "sheep";
+
+    }
+    else if (wolfCount === 0) {
+
+        role = "wolf";
+
+    }
+    else {
+
+        role =
+            sheepCount <= wolfCount
+                ? "sheep"
+                : "wolf";
+
+    }
+
+
+    const isWolf =
+        role === "wolf";
+
+
+    const player = {
+
+        id,
+
+        ws,
+
+        name:
+            isWolf
+                ? "Wolf"
+                : "Sheep",
+
+
+        flag: "🌍",
+
+
+        role,
+
+
+        alive: true,
+
+
+        x:
+            random(
+                500,
+                WORLD.w - 500
+            ),
+
+        y:
+            random(
+                500,
+                WORLD.h - 500
+            ),
+
+
+        vx: 0,
+        vy: 0,
+
+
+        input: {
+
+            dx: 0,
+            dy: 0,
+            boost: false
+
+        },
+
+
+        mass:
+            isWolf
+                ? SETTINGS.startingMassWolf
+                : SETTINGS.startingMassSheep,
+
+
+        score: 0,
+
+
+        hungerMs:
+            SETTINGS.hungerTime,
+
+
+        boostMsLeft: 0,
+        boostType: null,
+
+
+        visionMsLeft: 0,
+
+        shieldMsLeft: 0,
+
+        magnetMsLeft: 0,
+
+        shadowMsLeft: 0,
+
+
+        shadow: false,
+
+
+        bodyLength: 10,
+
+
+        lastUpdate: Date.now(),
+
+
+        lastEat: 0,
+
+
+        kills: 0,
+
+
+        createdAt: Date.now()
+
+    };
+
+
+    updateBodyLength(player);
+
+
+    players.set(
+        id,
+        player
+    );
+
+
+    return player;
+
+}
+
+
+/* ============================================================
+   BODY LENGTH
+============================================================ */
+
+function updateBodyLength(player) {
+
+    player.bodyLength =
+        Math.max(
+            8,
+            Math.min(
+                180,
+                Math.floor(
+                    8 +
+                    Math.sqrt(
+                        player.mass
+                    ) * 1.9
+                )
+            )
+        );
+
+}
+
+
+/* ============================================================
+   PLAYER RADIUS
+============================================================ */
+
+function playerRadius(player) {
+
+    const base =
+        player.role === "wolf"
+            ? 22
+            : 15;
+
+
+    const scale =
+        Math.min(
+            1 +
+            player.mass /
+            (player.role === "wolf"
+                ? 4000
+                : 20000),
+
+            player.role === "wolf"
+                ? 3.2
+                : 2.8
+        );
+
+
+    return base * scale;
+
+}
+
+
+/* ============================================================
+   PLAYER SPEED
+============================================================ */
+
+function playerSpeed(player) {
+
+    let speed =
+        player.role === "wolf"
+            ? SETTINGS.wolfSpeed
+            : SETTINGS.sheepSpeed;
+
+
+    if (player.boostMsLeft > 0) {
+
+        speed *=
+            SETTINGS.boostSpeedMultiplier;
+
+    }
+
+
+    /*
+    Large worms are slightly slower.
+    */
+
+    const massPenalty =
+        Math.min(
+            0.35,
+            player.mass / 100000
+        );
+
+
+    speed *=
+        1 - massPenalty;
+
+
+    return speed;
+
+}
+
+
+/* ============================================================
+   APPLY INPUT
+============================================================ */
+
+function updatePlayerMovement(player, dt) {
+
+    if (!player.alive)
+        return;
+
+
+    let dx =
+        Number(player.input.dx) || 0;
+
+    let dy =
+        Number(player.input.dy) || 0;
+
+
+    /*
+    Prevent clients from sending absurd values.
+    */
+
+    dx =
+        clamp(dx, -1000, 1000);
+
+    dy =
+        clamp(dy, -1000, 1000);
+
+
+    const length =
+        Math.hypot(dx, dy);
+
+
+    if (length < 1) {
+
+        player.vx *= 0.82;
+        player.vy *= 0.82;
+
+        return;
+
+    }
+
+
+    dx /= length;
+    dy /= length;
+
+
+    const speed =
+        playerSpeed(player);
+
+
+    /*
+    Smooth acceleration.
+    */
+
+    const acceleration =
+        0.45;
+
+
+    player.vx +=
+        (dx * speed - player.vx) *
+        acceleration;
+
+
+    player.vy +=
+        (dy * speed - player.vy) *
+        acceleration;
+
+
+    const maxSpeed =
+        speed;
+
+
+    const velocity =
+        Math.hypot(
+            player.vx,
+            player.vy
+        );
+
+
+    if (velocity > maxSpeed) {
+
+        player.vx =
+            player.vx /
+            velocity *
+            maxSpeed;
+
+        player.vy =
+            player.vy /
+            velocity *
+            maxSpeed;
+
+    }
+
+
+    player.x +=
+        player.vx * dt;
+
+
+    player.y +=
+        player.vy * dt;
+
+
+    /*
+    World boundary.
+    */
+
+    const radius =
+        playerRadius(player);
+
+
+    if(player.x < radius){
+
+        player.x = radius;
+        player.vx *= -0.3;
+
+    }
+
+
+    if(player.y < radius){
+
+        player.y = radius;
+        player.vy *= -0.3;
+
+    }
+
+
+    if(player.x > WORLD.w-radius){
+
+        player.x =
+            WORLD.w-radius;
+
+        player.vx *= -0.3;
+
+    }
+
+
+    if(player.y > WORLD.h-radius){
+
+        player.y =
+            WORLD.h-radius;
+
+        player.vy *= -0.3;
+
+    }
+
+}
+
+
+/* ============================================================
+   BOOST
+============================================================ */
+
+function updateBoost(player, dt) {
+
+    if(!player.input.boost)
+        return;
+
+
+    if(player.boostMsLeft > 0)
+        return;
+
+
+    /*
+    Energy cost.
+
+    Mass slowly decreases while boosting.
+    */
+
+    if(player.mass <= 30)
+        return;
+
+
+    player.mass -=
+        SETTINGS.boostDrainPerSecond *
+        dt;
+
+
+    updateBodyLength(player);
+
+}
+
+
+/* ============================================================
+   TIMERS
+============================================================ */
+
+function updateTimers(player, dtMs) {
+
+    player.hungerMs -= dtMs;
+
+
+    if(player.boostMsLeft > 0){
+
+        player.boostMsLeft -= dtMs;
+
+        if(player.boostMsLeft <= 0){
+
+            player.boostMsLeft = 0;
+            player.boostType = null;
+
+        }
+
+    }
+
+
+    if(player.visionMsLeft > 0){
+
+        player.visionMsLeft -= dtMs;
+
+        if(player.visionMsLeft < 0)
+            player.visionMsLeft = 0;
+
+    }
+
+
+    if(player.shieldMsLeft > 0){
+
+        player.shieldMsLeft -= dtMs;
+
+        if(player.shieldMsLeft < 0)
+            player.shieldMsLeft = 0;
+
+    }
+
+
+    if(player.magnetMsLeft > 0){
+
+        player.magnetMsLeft -= dtMs;
+
+        if(player.magnetMsLeft < 0)
+            player.magnetMsLeft = 0;
+
+    }
+
+
+    if(player.shadowMsLeft > 0){
+
+        player.shadowMsLeft -= dtMs;
+
+        if(player.shadowMsLeft <= 0){
+
+            player.shadowMsLeft = 0;
+            player.shadow = false;
+
+        }
+
+    }
+
+
+    /*
+    Hunger death.
+
+    You can change this later to damage
+    instead of instant death.
+    */
+
+    if(player.hungerMs <= 0){
+
+        killPlayer(
+            player,
+            "hunger"
+        );
+
+    }
+
+}
+
+
+/* ============================================================
+   FOOD MAGNET
+============================================================ */
+
+function updateMagnet(player) {
+
+    if(player.magnetMsLeft <= 0)
+        return;
+
+
+    const range=220;
+
+
+    for(const food of foods){
+
+        const dx=
+            player.x-food.x;
+
+        const dy=
+            player.y-food.y;
+
+
+        const d=
+            Math.hypot(dx,dy);
+
+
+        if(d<=0 || d>range)
+            continue;
+
+
+        const pull=
+            Math.min(
+                8,
+                180/d
+            );
+
+
+        food.x +=
+            dx/d*pull;
+
+        food.y +=
+            dy/d*pull;
+
+    }
+
+}
+
+
+/* ============================================================
+   FOOD COLLISION
+============================================================ */
+
+function eatFood(player) {
+
+    if(!player.alive)
+        return;
+
+
+    const radius =
+        playerRadius(player);
+
+
+    for(
+        let i=foods.length-1;
+        i>=0;
+        i--
+    ){
+
+        const food=foods[i];
+
+
+        const d=
+            Math.hypot(
+                player.x-food.x,
+                player.y-food.y
+            );
+
+
+        if(
+            d >
+            radius + 18
+        )
+            continue;
+
+
+        /*
+        EAT
+        */
+
+        player.mass +=
+            food.value;
+
+
+        player.score +=
+            food.value;
+
+
+        player.hungerMs =
+            SETTINGS.hungerTime;
+
+
+        player.lastEat =
+            Date.now();
+
+
+        applyFoodEffect(
+            player,
+            food.key
+        );
+
+
+        foods.splice(
+            i,
+            1
+        );
+
+
+        /*
+        Replace food.
+        */
+
+        spawnFood();
+
+    }
+
+
+    updateBodyLength(player);
+
+}
+
+
+/* ============================================================
+   FOOD EFFECTS
+============================================================ */
+
+function applyFoodEffect(
+    player,
+    key
+){
+
+    const type =
+        FOOD_TYPES[key];
+
+
+    if(!type)
+        return;
+
+
+    if(
+        key === "golden"
+    ){
+
+        player.boostMsLeft =
+            SETTINGS.boostTime;
+
+        player.boostType =
+            "golden";
+
+    }
+
+
+    if(
+        key === "energy"
+    ){
+
+        player.boostMsLeft =
+            SETTINGS.boostTime;
+
+        player.boostType =
+            "energy";
+
+    }
+
+
+    if(
+        key === "turbo"
+    ){
+
+        player.boostMsLeft =
+            SETTINGS.boostTime;
+
+        player.boostType =
+            "turbo";
+
+    }
+
+
+    if(
+        key === "eagleeye"
+    ){
+
+        player.visionMsLeft =
+            SETTINGS.radarTime;
+
+    }
+
+
+    if(
+        key === "shield"
+    ){
+
+        player.shieldMsLeft =
+            SETTINGS.shieldTime;
+
+    }
+
+
+    if(
+        key === "magnet"
+    ){
+
+        player.magnetMsLeft =
+            SETTINGS.magnetTime;
+
+    }
+
+}
+
+
+/* ============================================================
+   PLAYER COLLISION
+============================================================ */
+
+function checkPlayerCollisions() {
+
+    const alive =
+        [...players.values()]
+        .filter(
+            p=>p.alive
+        );
+
+
+    for(let i=0;i<alive.length;i++){
+
+        const a=alive[i];
+
+
+        for(
+            let j=i+1;
+            j<alive.length;
+            j++
+        ){
+
+            const b=alive[j];
+
+
+            if(!a.alive || !b.alive)
+                continue;
+
+
+            const d=
+                Math.hypot(
+                    a.x-b.x,
+                    a.y-b.y
+                );
+
+
+            const ra=
+                playerRadius(a);
+
+
+            const rb=
+                playerRadius(b);
+
+
+            /*
+            Simple head-to-head collision.
+
+            The larger player wins.
+            */
+
+            if(
+                d >
+                (ra+rb)*
+                SETTINGS.collisionPadding
+            )
+                continue;
+
+
+            if(
+                a.shieldMsLeft>0 ||
+                b.shieldMsLeft>0
+            )
+                continue;
+
+
+            if(
+                a.mass >=
+                b.mass*1.05
+            ){
+
+                killPlayer(
+                    b,
+                    "collision",
+                    a
+                );
+
+            }
+            else if(
+                b.mass >=
+                a.mass*1.05
+            ){
+
+                killPlayer(
+                    a,
+                    "collision",
+                    b
+                );
+
+            }
+
+        }
+
+    }
+
+}
+
+
+/* ============================================================
+   KILL PLAYER
+============================================================ */
+
+function killPlayer(
+    player,
+    reason,
+    killer=null
+){
+
+    if(!player.alive)
+        return;
+
+
+    player.alive=false;
+
+
+    if(killer){
+
+        killer.kills++;
+
+        killer.score +=
+            Math.floor(
+                player.mass*.5
+            );
+
+        killer.mass +=
+            Math.floor(
+                player.mass*.25
+            );
+
+        updateBodyLength(killer);
+
+    }
+
+
+    /*
+    Drop food around death location.
+    */
+
+    const dropCount =
+        Math.min(
+            80,
+            Math.floor(
+                player.mass *
+                SETTINGS.foodDropMultiplier /
+                10
+            )
+        );
+
+
+    for(
+        let i=0;
+        i<dropCount;
+        i++
+    ){
+
+        const angle=
+            Math.random()*
+            Math.PI*2;
+
+
+        const distance=
+            random(
+                20,
+                100
+            );
+
+
+        const value=
+            Math.max(
+                5,
+                Math.floor(
+                    player.mass/
+                    dropCount
+                )
+            );
+
+
+        let key="grass";
+
+
+        if(value>=80)
+            key="donut";
+        else if(value>=60)
+            key="burger";
+        else if(value>=40)
+            key="pizza";
+        else if(value>=25)
+            key="momo";
+        else if(value>=15)
+            key="apple";
+
+
+        spawnFood(
+            player.x+
+            Math.cos(angle)*
+            distance,
+
+            player.y+
+            Math.sin(angle)*
+            distance,
+
+            key
+        );
+
+    }
+
+
+    console.log(
+        `Player ${player.id} died: ${reason}`
+    );
+
+
+    /*
+    Respawn after delay.
+
+    For a real competitive game you may
+    want a lobby instead.
+    */
+
+    setTimeout(()=>{
+
+        if(!players.has(player.id))
+            return;
+
+
+        respawnPlayer(player);
+
+    },3000);
+
+}
+
+
+/* ============================================================
+   RESPAWN
+============================================================ */
+
+function respawnPlayer(player){
+
+    player.alive=true;
+
+
+    player.x=
+        random(
+            500,
+            WORLD.w-500
+        );
+
+
+    player.y=
+        random(
+            500,
+            WORLD.h-500
+        );
+
+
+    player.vx=0;
+    player.vy=0;
+
+
+    player.mass=
+        player.role==="wolf"
+            ? SETTINGS.startingMassWolf
+            : SETTINGS.startingMassSheep;
+
+
+    player.score=0;
+
+    player.kills=0;
+
+
+    player.hungerMs=
+        SETTINGS.hungerTime;
+
+
+    player.boostMsLeft=0;
+    player.boostType=null;
+
+    player.visionMsLeft=0;
+    player.shieldMsLeft=0;
+    player.magnetMsLeft=0;
+    player.shadowMsLeft=0;
+
+    player.shadow=false;
+
+
+    updateBodyLength(player);
+
+}
+
+
+/* ============================================================
+   KING SYSTEM
+============================================================ */
+
+function getKing(role){
+
+    let king=null;
+
+
+    for(const player of players.values()){
+
+        if(
+            !player.alive ||
+            player.role!==role
+        )
+            continue;
+
+
+        if(
+            !king ||
+            player.mass>king.mass
+        ){
+
+            king=player;
+
+        }
+
+    }
+
+
+    return king;
+
+}
+
+
+/* ============================================================
+   LEADERBOARD
+============================================================ */
+
+function getLeaderboard(){
+
+    return [...players.values()]
+
+        .filter(
+            p=>p.alive
+        )
+
+        .sort(
+            (a,b)=>
+                b.mass-a.mass
+        )
+
+        .slice(
+            0,
+            10
+        )
+
+        .map(
+            p=>({
+
+                id:p.id,
+
+                name:p.name,
+
+                flag:p.flag,
+
+                role:p.role,
+
+                mass:Math.floor(
+                    p.mass
+                )
+
+            })
+        );
+
+}
+
+
+/* ============================================================
+   SERIALIZE PLAYER
+============================================================ */
+
+function serializePlayer(player){
+
+    return {
+
+        id:player.id,
+
+        name:player.name,
+
+        flag:player.flag,
+
+        role:player.role,
+
+        alive:player.alive,
+
+        x:Math.round(player.x*10)/10,
+
+        y:Math.round(player.y*10)/10,
+
+        mass:Math.floor(player.mass),
+
+        hungerMs:
+            Math.max(
+                0,
+                Math.floor(
+                    player.hungerMs
+                )
+            ),
+
+        boostMsLeft:
+            Math.max(
+                0,
+                Math.floor(
+                    player.boostMsLeft
+                )
+            ),
+
+        boostType:
+            player.boostType,
+
+        visionMsLeft:
+            Math.max(
+                0,
+                Math.floor(
+                    player.visionMsLeft
+                )
+            ),
+
+        shieldMsLeft:
+            Math.max(
+                0,
+                Math.floor(
+                    player.shieldMsLeft
+                )
+            ),
+
+        magnetMsLeft:
+            Math.max(
+                0,
+                Math.floor(
+                    player.magnetMsLeft
+                )
+            ),
+
+        shadowMsLeft:
+            Math.max(
+                0,
+                Math.floor(
+                    player.shadowMsLeft
+                )
+            ),
+
+        shadow:
+            player.shadow
+
+    };
+
+}
+
+
+/* ============================================================
+   SERIALIZE FOOD
+============================================================ */
+
+function serializeFood(food){
+
+    return {
+
+        id:food.id,
+
+        x:Math.round(food.x*10)/10,
+
+        y:Math.round(food.y*10)/10,
+
+        key:food.key,
+
+        value:food.value
+
+    };
+
+}
+
+
+/* ============================================================
+   NEARBY FOOD
+============================================================ */
+
+function getNearbyFoods(player){
+
+    const radius =
+        SETTINGS.broadcastRadius;
+
+
+    return foods
+
+        .filter(food=>{
+
+            return (
+                Math.abs(
+                    food.x-player.x
+                ) <= radius
+                &&
+                Math.abs(
+                    food.y-player.y
+                ) <= radius
+            );
+
+        })
+
+        .map(
+            serializeFood
+        );
+
+}
+
+
+/* ============================================================
+   NEARBY PLAYERS
+============================================================ */
+
+function getNearbyPlayers(player){
+
+    const radius =
+        SETTINGS.broadcastRadius;
+
+
+    return [...players.values()]
+
+        .filter(other=>{
+
+            if(
+                other.id===player.id
+            )
+                return true;
+
+
+            /*
+            Dead players are not rendered.
+            */
+
+            if(!other.alive)
+                return false;
+
+
+            /*
+            Shadow players are hidden unless
+            the receiving player has radar.
+            */
+
+            if(
+                other.shadow &&
+                player.visionMsLeft<=0
+            ){
+
+                return false;
+
+            }
+
+
+            return (
+                Math.abs(
+                    other.x-player.x
+                )<=radius
+                &&
+                Math.abs(
+                    other.y-player.y
+                )<=radius
+            );
+
+        })
+
+        .map(
+            serializePlayer
+        );
+
+}
+
+
+/* ============================================================
+   SEND STATE
+============================================================ */
+
+function sendState(player){
+
+    if(
+        !player.ws ||
+        player.ws.readyState !==
+        WebSocket.OPEN
+    )
+        return;
+
+
+    const kingSheep =
+        getKing("sheep");
+
+
+    const kingWolf =
+        getKing("wolf");
+
+
+    const message={
+
+        type:"state",
+
+
+        players:
+            getNearbyPlayers(player),
+
+
+        foods:
+            getNearbyFoods(player),
+
+
+        kingSheepId:
+            kingSheep
+                ? kingSheep.id
+                : null,
+
+
+        kingWolfId:
+            kingWolf
+                ? kingWolf.id
+                : null,
+
+
+        leaderboard:
+            getLeaderboard()
+
+    };
+
+
+    try{
+
+        player.ws.send(
+            JSON.stringify(message)
+        );
+
+    }catch(err){
+
+        console.error(
+            "Send state error",
+            err
+        );
+
+    }
+
+}
+
+
+/* ============================================================
+   BROADCAST
+============================================================ */
+
+function broadcastState(){
+
+    for(const player of players.values()){
+
+        sendState(player);
+
+    }
+
+}
+
+
+/* ============================================================
+   CONNECTION
+============================================================ */
+
+wss.on("connection",(ws,req)=>{
+
+    if(
+        players.size >=
+        SETTINGS.maxPlayers
+    ){
+
+        ws.close(
+            1013,
+            "Server full"
+        );
+
+        return;
+
+    }
+
+
+    const player=
+        createPlayer(ws);
+
+
+    console.log(
+        `Player connected: ${player.id} (${player.role})`
+    );
+
+
+    /*
+    Welcome packet.
+    */
+
+    ws.send(
+        JSON.stringify({
+
+            type:"welcome",
+
+            id:player.id,
+
+            world:WORLD,
+
+            hungerLimitMs:
+                SETTINGS.hungerTime
+
+        })
+    );
+
+
+    /*
+    INPUT
+    */
+
+    ws.on("message",data=>{
+
+        try{
+
+            const msg=
+                JSON.parse(
+                    data.toString()
+                );
+
+
+            if(
+                msg.type!=="input"
+            )
+                return;
+
+
+            /*
+            Server-side validation.
+            */
+
+            player.input.dx=
+                clamp(
+                    Number(msg.dx)||0,
+                    -1000,
+                    1000
+                );
+
+
+            player.input.dy=
+                clamp(
+                    Number(msg.dy)||0,
+                    -1000,
+                    1000
+                );
+
+
+            player.input.boost=
+                Boolean(
+                    msg.boost
+                );
+
+
+        }catch(err){
+
+            console.log(
+                "Invalid input packet"
+            );
+
+        }
+
+    });
+
+
+    /*
+    Disconnect
+    */
+
+    ws.on("close",()=>{
+
+        players.delete(
+            player.id
+        );
+
+
+        console.log(
+            `Player disconnected: ${player.id}`
+        );
+
+    });
+
+
+    ws.on("error",()=>{
+
+        players.delete(
+            player.id
+        );
+
+    });
+
+});
+
+
+/* ============================================================
+   MAIN GAME LOOP
+============================================================ */
+
+let lastTick=
+    Date.now();
+
+
+setInterval(()=>{
+
+    const now=
+        Date.now();
+
+
+    const dtMs=
+        Math.min(
+            100,
+            now-lastTick
+        );
+
+
+    lastTick=now;
+
+
+    const dt=
+        dtMs/16.6667;
+
+
+    /*
+    UPDATE PLAYERS
+    */
+
+    for(const player of players.values()){
+
+        if(!player.alive)
+            continue;
+
+
+        updatePlayerMovement(
+            player,
+            dt
+        );
+
+
+        updateBoost(
+            player,
+            dtMs/1000
+        );
+
+
+        updateTimers(
+            player,
+            dtMs
+        );
+
+
+        updateMagnet(
+            player
+        );
+
+
+        eatFood(
+            player
+        );
+
+
+        updateBodyLength(
+            player
+        );
+
+    }
+
+
+    /*
+    COLLISIONS
+    */
+
+    checkPlayerCollisions();
+
+
+},1000/SETTINGS.tickRate);
+
+
+/* ============================================================
+   STATE LOOP
+============================================================ */
+
+setInterval(()=>{
+
+    broadcastState();
+
+},1000/SETTINGS.stateRate);
+
+
+/* ============================================================
+   FOOD MAINTENANCE
+============================================================ */
+
+setInterval(()=>{
+
+    const missing=
+        SETTINGS.maxFood-
+        foods.length;
+
+
+    if(missing<=0)
+        return;
+
+
+    const count=
+        Math.min(
+            SETTINGS.foodSpawnBatch,
+            missing
+        );
+
+
+    for(
+        let i=0;
+        i<count;
+        i++
+    ){
+
+        spawnFood();
+
+    }
+
+},1000);
+
+
+/* ============================================================
+   CLEANUP OLD DEAD CONNECTIONS
+============================================================ */
+
+setInterval(()=>{
+
+    for(const [id,player] of players){
+
+        if(
+            !player.ws ||
+            player.ws.readyState ===
+            WebSocket.CLOSED
+        ){
+
+            players.delete(id);
+
+        }
+
+    }
+
+},10000);
+
+
+/* ============================================================
+   SERVER ERROR HANDLING
+============================================================ */
+
+process.on(
+    "uncaughtException",
+    err=>{
+
+        console.error(
+            "UNCAUGHT ERROR:",
+            err
+        );
+
+    }
+);
+
+
+process.on(
+    "unhandledRejection",
+    err=>{
+
+        console.error(
+            "UNHANDLED REJECTION:",
+            err
+        );
+
+    }
+);
+```
