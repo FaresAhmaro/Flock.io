@@ -1,4 +1,5 @@
-// db.js — lightweight persistent user store (JSON file based), with a
+// db.js — stores username, hashed password, highScore, gold, and skin.
+// lightweight persistent user store (JSON file based), with a
 // safe in-memory fallback if the filesystem isn't writable (common on
 // some serverless/read-only hosts). This means the game NEVER crashes
 // because of storage — worst case, accounts just don't persist across
