@@ -7,108 +7,245 @@
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; background: #0d1117; font-family: 'Segoe UI', Arial, sans-serif; }
-  canvas { display: block; background: #11151c; }
+  canvas#game { display: block; background: #11151c; }
 
-  #startScreen {
+  .overlay {
     position: fixed; inset: 0; display: flex; flex-direction: column;
     align-items: center; justify-content: center; background: radial-gradient(circle at center, #1b2230, #0a0d12);
-    z-index: 10;
+    z-index: 10; padding: 20px; text-align: center;
   }
-  #startScreen h1 { color: #fff; font-size: 42px; margin-bottom: 20px; letter-spacing: 2px; }
-  #startScreen h1 span { color: #5ecbff; }
-  #nameInput {
-    padding: 12px 16px; font-size: 18px; border-radius: 8px; border: none;
-    outline: none; width: 260px; text-align: center; margin-bottom: 16px;
-  }
-  #playBtn {
-    padding: 12px 32px; font-size: 18px; border: none; border-radius: 8px;
-    background: #5ecbff; color: #0a0d12; font-weight: bold; cursor: pointer;
-    transition: transform 0.1s ease;
-  }
-  #playBtn:hover { transform: scale(1.05); }
-  #hint { color: #8892a0; margin-top: 14px; font-size: 14px; }
+  .overlay h1 { color: #fff; font-size: 38px; margin-bottom: 6px; letter-spacing: 1px; }
+  .overlay h1 span { color: #5ecbff; }
+  .overlay .sub { color: #8892a0; margin-bottom: 18px; font-size: 14px; }
 
-  #hud {
-    position: fixed; top: 12px; left: 12px; color: #fff; font-size: 14px;
-    background: rgba(0,0,0,0.35); padding: 8px 12px; border-radius: 8px; z-index: 5;
-  }
-  #leaderboard {
-    position: fixed; top: 12px; right: 12px; background: rgba(0,0,0,0.35);
-    color: #fff; padding: 10px 14px; border-radius: 8px; width: 180px; z-index: 5;
-  }
+  .field { padding: 10px 14px; font-size: 16px; border-radius: 8px; border: none; outline: none; width: 240px; margin: 5px; text-align: center; }
+  .btn { padding: 10px 26px; font-size: 16px; border: none; border-radius: 8px; background: #5ecbff; color: #0a0d12; font-weight: bold; cursor: pointer; margin: 6px; transition: transform .1s; }
+  .btn:hover { transform: scale(1.05); }
+  .btn.secondary { background: #333c4a; color: #fff; }
+  .btn.small { padding: 6px 14px; font-size: 13px; }
+  .row { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; max-width: 480px; }
+
+  .authTabs { display: flex; gap: 8px; margin-bottom: 10px; }
+  .authTabs button { background: none; border: 1px solid #333c4a; color: #8892a0; padding: 6px 16px; border-radius: 20px; cursor: pointer; }
+  .authTabs button.active { background: #5ecbff; color: #0a0d12; border-color: #5ecbff; }
+  #authError { color: #ff5e5e; font-size: 13px; min-height: 18px; margin-top: 4px; }
+  #userBadge { color: #ffd700; font-size: 13px; margin-bottom: 8px; }
+
+  .swatch { width: 34px; height: 34px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; display: flex; align-items: center; justify-content: center; font-size: 16px; }
+  .swatch.selected { border-color: #fff; transform: scale(1.15); }
+  .pickerLabel { color: #8892a0; font-size: 12px; margin: 10px 0 4px; text-transform: uppercase; letter-spacing: 1px; }
+
+  #hud { position: fixed; top: 12px; left: 12px; color: #fff; font-size: 14px; background: rgba(0,0,0,0.35); padding: 8px 12px; border-radius: 8px; z-index: 5; display:none; }
+  #hud .gold { color: #ffd700; }
+  #powerups { display: flex; gap: 6px; margin-top: 6px; }
+  .pill { background: rgba(255,255,255,0.12); border-radius: 12px; padding: 2px 8px; font-size: 12px; }
+
+  #leaderboard { position: fixed; top: 12px; right: 12px; background: rgba(0,0,0,0.35); color: #fff; padding: 10px 14px; border-radius: 8px; width: 190px; z-index: 5; display:none; }
   #leaderboard h3 { font-size: 14px; margin-bottom: 6px; color: #5ecbff; }
   #leaderboard ol { padding-left: 18px; font-size: 13px; line-height: 1.5; }
 
-  #minimap {
-    position: fixed; bottom: 12px; right: 12px; width: 140px; height: 140px;
-    background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; z-index: 5;
-  }
+  #minimap { position: fixed; bottom: 12px; right: 12px; width: 150px; height: 150px; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; z-index: 5; display:none; }
 
-  #deathScreen {
-    position: fixed; inset: 0; display: none; flex-direction: column;
-    align-items: center; justify-content: center; background: rgba(10,13,18,0.9); z-index: 20;
-  }
-  #deathScreen h2 { color: #ff5e5e; font-size: 32px; margin-bottom: 10px; }
-  #deathScreen p { color: #fff; margin-bottom: 20px; font-size: 18px; }
+  #deathScreen h2 { color: #ff5e5e; font-size: 30px; margin-bottom: 6px; }
+  #deathScreen p { color: #fff; margin-bottom: 14px; font-size: 16px; }
+
+  #radarArrows div { position: fixed; width: 0; height: 0; border-left: 8px solid transparent; border-right: 8px solid transparent; border-bottom: 16px solid #c95eff; z-index: 6; }
 </style>
 </head>
 <body>
 
-<div id="startScreen">
+<div id="startScreen" class="overlay">
   <h1>Worm<span>.io</span> Clone</h1>
-  <input id="nameInput" type="text" placeholder="Enter your name" maxlength="16" />
-  <button id="playBtn">Play</button>
-  <div id="hint">Move your mouse to steer &middot; Hold click / space to boost</div>
+  <div class="sub">Eat, grow, survive. Hold click / space to boost.</div>
+
+  <div id="userBadge" style="display:none;"></div>
+
+  <div class="authTabs">
+    <button id="tabGuest" class="active">Guest</button>
+    <button id="tabLogin">Login</button>
+    <button id="tabRegister">Register</button>
+  </div>
+
+  <div id="authFields">
+    <input id="nameInput" class="field" type="text" placeholder="Your name" maxlength="16" />
+    <div id="authUserPass" style="display:none;">
+      <input id="authUser" class="field" type="text" placeholder="Username" maxlength="16" />
+      <input id="authPass" class="field" type="password" placeholder="Password" maxlength="64" />
+    </div>
+  </div>
+  <div id="authError"></div>
+
+  <div class="pickerLabel">Choose a skin / flag</div>
+  <div class="row" id="skinPicker"></div>
+
+  <div class="pickerLabel">Choose an accessory</div>
+  <div class="row" id="accessoryPicker"></div>
+
+  <button id="playBtn" class="btn">Play</button>
+  <button id="logoutBtn" class="btn secondary" style="display:none;">Log out</button>
 </div>
 
-<div id="deathScreen">
+<div id="deathScreen" class="overlay" style="display:none;">
   <h2>You died!</h2>
   <p id="finalScore">Score: 0</p>
-  <input id="nameInput2" type="text" placeholder="Enter your name" maxlength="16" />
-  <button id="respawnBtn">Play Again</button>
+  <button id="respawnBtn" class="btn">Play Again</button>
 </div>
 
-<div id="hud" style="display:none;">Score: <span id="scoreVal">0</span></div>
-<div id="leaderboard" style="display:none;">
+<div id="hud">
+  Score: <span id="scoreVal">0</span> &nbsp;|&nbsp; <span class="gold">💰 <span id="goldVal">0</span></span>
+  <div id="powerups"></div>
+</div>
+<div id="leaderboard">
   <h3>Leaderboard</h3>
   <ol id="leaderboardList"></ol>
 </div>
-<canvas id="minimap" width="140" height="140" style="display:none;"></canvas>
+<canvas id="minimap" width="150" height="150"></canvas>
+<div id="radarArrows"></div>
 
 <canvas id="game"></canvas>
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
 const socket = io();
-
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 const minimap = document.getElementById('minimap');
 const mctx = minimap.getContext('2d');
 
-function resize() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-}
-window.addEventListener('resize', resize);
-resize();
+function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+window.addEventListener('resize', resize); resize();
 
-let worldSize = 4000;
-let latestState = null;
-let mouseAngle = 0;
-let boosting = false;
-let joined = false;
+// ---------- Cosmetics ----------
+const SKINS = {
+  classic: { colors: ['#5ecbff'], label: 'Classic' },
+  lava: { colors: ['#ff5e5e'], label: 'Lava' },
+  toxic: { colors: ['#5eff8f'], label: 'Toxic' },
+  royal: { colors: ['#c95eff'], label: 'Royal' },
+  sunset: { colors: ['#ff9d5e'], label: 'Sunset' },
+  gold: { colors: ['#ffd700'], label: 'Gold' },
+  flagUSA: { colors: ['#3c3b6e', '#fff', '#b22234'], label: 'USA Flag' },
+  flagJPN: { colors: ['#fff', '#bc002d'], label: 'Japan Flag' },
+  flagGER: { colors: ['#222', '#d00', '#ffce00'], label: 'Germany Flag' },
+  rainbow: { colors: ['#ff5e5e', '#ffe65e', '#5eff8f', '#5ecbff', '#c95eff'], label: 'Rainbow' }
+};
+const ACCESSORIES = { none: '', shades: '😎', crown: '👑', tophat: '🎩', hero: '🦸', bunny: '🐰', ghost: '👻', party: '🥳', halo: '😇' };
+
+let selectedSkin = localStorage.getItem('wc_skin') || 'classic';
+let selectedAccessory = localStorage.getItem('wc_accessory') || 'none';
+let authToken = localStorage.getItem('wc_token') || null;
+let authUsername = localStorage.getItem('wc_username') || null;
+
+function buildPicker(container, obj, selectedKey, onPick, isSkin) {
+  container.innerHTML = '';
+  Object.keys(obj).forEach(key => {
+    const el = document.createElement('div');
+    el.className = 'swatch' + (key === selectedKey ? ' selected' : '');
+    if (isSkin) {
+      el.style.background = obj[key].colors.length > 1
+        ? `conic-gradient(${obj[key].colors.join(',')})`
+        : obj[key].colors[0];
+      el.title = obj[key].label;
+    } else {
+      el.style.background = '#222b38';
+      el.textContent = obj[key] || '✖';
+      el.title = key;
+    }
+    el.addEventListener('click', () => {
+      container.querySelectorAll('.swatch').forEach(s => s.classList.remove('selected'));
+      el.classList.add('selected');
+      onPick(key);
+    });
+    container.appendChild(el);
+  });
+}
+buildPicker(document.getElementById('skinPicker'), SKINS, selectedSkin, k => { selectedSkin = k; localStorage.setItem('wc_skin', k); }, true);
+buildPicker(document.getElementById('accessoryPicker'), ACCESSORIES, selectedAccessory, k => { selectedAccessory = k; localStorage.setItem('wc_accessory', k); }, false);
+
+// ---------- Auth UI ----------
+const tabGuest = document.getElementById('tabGuest'), tabLogin = document.getElementById('tabLogin'), tabRegister = document.getElementById('tabRegister');
+const authUserPass = document.getElementById('authUserPass');
+const nameInput = document.getElementById('nameInput');
+const authError = document.getElementById('authError');
+const userBadge = document.getElementById('userBadge');
+const logoutBtn = document.getElementById('logoutBtn');
+let authMode = 'guest';
+
+function setTab(mode) {
+  authMode = mode;
+  [tabGuest, tabLogin, tabRegister].forEach(t => t.classList.remove('active'));
+  authError.textContent = '';
+  if (mode === 'guest') { tabGuest.classList.add('active'); authUserPass.style.display = 'none'; nameInput.style.display = 'inline-block'; }
+  if (mode === 'login') { tabLogin.classList.add('active'); authUserPass.style.display = 'block'; nameInput.style.display = 'none'; }
+  if (mode === 'register') { tabRegister.classList.add('active'); authUserPass.style.display = 'block'; nameInput.style.display = 'none'; }
+}
+tabGuest.addEventListener('click', () => setTab('guest'));
+tabLogin.addEventListener('click', () => setTab('login'));
+tabRegister.addEventListener('click', () => setTab('register'));
+setTab('guest');
+
+function refreshUserBadge() {
+  if (authToken && authUsername) {
+    userBadge.style.display = 'block';
+    userBadge.textContent = 'Logged in as ' + authUsername;
+    logoutBtn.style.display = 'inline-block';
+  } else {
+    userBadge.style.display = 'none';
+    logoutBtn.style.display = 'none';
+  }
+}
+refreshUserBadge();
+
+logoutBtn.addEventListener('click', () => {
+  authToken = null; authUsername = null;
+  localStorage.removeItem('wc_token'); localStorage.removeItem('wc_username');
+  refreshUserBadge();
+});
+
+async function doAuth() {
+  const username = document.getElementById('authUser').value.trim();
+  const password = document.getElementById('authPass').value;
+  authError.textContent = '';
+  try {
+    const res = await fetch('/api/' + authMode, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await res.json();
+    if (!res.ok) { authError.textContent = data.error || 'Error'; return false; }
+    authToken = data.token; authUsername = data.username;
+    localStorage.setItem('wc_token', authToken);
+    localStorage.setItem('wc_username', authUsername);
+    if (data.skin) { selectedSkin = data.skin; localStorage.setItem('wc_skin', data.skin); }
+    if (data.accessory) { selectedAccessory = data.accessory; localStorage.setItem('wc_accessory', data.accessory); }
+    buildPicker(document.getElementById('skinPicker'), SKINS, selectedSkin, k => { selectedSkin = k; }, true);
+    buildPicker(document.getElementById('accessoryPicker'), ACCESSORIES, selectedAccessory, k => { selectedAccessory = k; }, false);
+    refreshUserBadge();
+    return true;
+  } catch (e) {
+    authError.textContent = 'Network error.';
+    return false;
+  }
+}
+
+// ---------- Start / respawn ----------
+let worldSize = 6000, latestState = null, mouseAngle = 0, boosting = false, joined = false;
 
 const startScreen = document.getElementById('startScreen');
 const deathScreen = document.getElementById('deathScreen');
 const hud = document.getElementById('hud');
 const leaderboardEl = document.getElementById('leaderboard');
 const scoreVal = document.getElementById('scoreVal');
+const goldVal = document.getElementById('goldVal');
 const leaderboardList = document.getElementById('leaderboardList');
 const finalScore = document.getElementById('finalScore');
+const powerupsEl = document.getElementById('powerups');
 
-function startGame(name) {
-  socket.emit('join', { name });
+async function startGame() {
+  if (authMode !== 'guest') {
+    const ok = await doAuth();
+    if (!ok) return;
+  }
+  socket.emit('join', { name: nameInput.value || authUsername, token: authToken, skin: selectedSkin, accessory: selectedAccessory });
   startScreen.style.display = 'none';
   deathScreen.style.display = 'none';
   hud.style.display = 'block';
@@ -116,15 +253,9 @@ function startGame(name) {
   minimap.style.display = 'block';
   joined = true;
 }
-
-document.getElementById('playBtn').addEventListener('click', () => {
-  startGame(document.getElementById('nameInput').value);
-});
-document.getElementById('nameInput').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') startGame(document.getElementById('nameInput').value);
-});
+document.getElementById('playBtn').addEventListener('click', startGame);
 document.getElementById('respawnBtn').addEventListener('click', () => {
-  socket.emit('respawn', { name: document.getElementById('nameInput2').value });
+  socket.emit('respawn', { name: nameInput.value || authUsername, skin: selectedSkin, accessory: selectedAccessory });
   deathScreen.style.display = 'none';
   hud.style.display = 'block';
   leaderboardEl.style.display = 'block';
@@ -140,103 +271,144 @@ canvas.addEventListener('mouseup', () => boosting = false);
 window.addEventListener('keydown', (e) => { if (e.code === 'Space') boosting = true; });
 window.addEventListener('keyup', (e) => { if (e.code === 'Space') boosting = false; });
 
-// send input to server at a steady rate
-setInterval(() => {
-  if (!joined) return;
-  socket.emit('input', { angle: mouseAngle, boosting });
-}, 50);
+setInterval(() => { if (joined) socket.emit('input', { angle: mouseAngle, boosting }); }, 50);
 
 socket.on('state', (state) => {
   latestState = state;
   if (state.worldSize) worldSize = state.worldSize;
 
   if (!state.you) {
-    // dead
     if (joined) {
       joined = false;
       hud.style.display = 'none';
       leaderboardEl.style.display = 'none';
       minimap.style.display = 'none';
+      finalScore.textContent = 'Score: ' + (latestState.lastScore || 0);
       deathScreen.style.display = 'flex';
     }
-    // still update leaderboard while dead
     renderLeaderboard(state.leaderboard);
     return;
   }
 
   scoreVal.textContent = state.you.score;
+  goldVal.textContent = state.you.gold;
+  latestState.lastScore = state.you.score;
   renderLeaderboard(state.leaderboard);
+  renderPowerups(state.you);
+  renderRadar(state);
+});
+
+socket.on('dead', (data) => {
+  finalScore.textContent = 'Score: ' + data.score + '   |   💰 Gold earned: ' + data.gold;
 });
 
 function renderLeaderboard(list) {
   leaderboardList.innerHTML = '';
   (list || []).forEach(p => {
     const li = document.createElement('li');
-    li.textContent = `${p.name} — ${p.score}`;
+    li.textContent = `${p.name}${p.isBot ? ' 🤖' : ''} — ${p.score}`;
     leaderboardList.appendChild(li);
   });
 }
 
-function drawGrid(camX, camY) {
+function renderPowerups(you) {
+  powerupsEl.innerHTML = '';
+  if (you.speedActive) powerupsEl.innerHTML += '<span class="pill">⚡ Speed</span>';
+  if (you.invincibleActive) {
+    const secs = Math.ceil(you.invincibleMsLeft / 1000);
+    powerupsEl.innerHTML += `<span class="pill">🛡️ Invincible ${secs}s</span>`;
+  }
+  if (you.radarActive) powerupsEl.innerHTML += '<span class="pill">📡 Radar</span>';
+}
+
+function renderRadar(state) {
+  const container = document.getElementById('radarArrows');
+  container.innerHTML = '';
+  if (!state.you.radarActive || !state.radarTargets) return;
+  const cx = canvas.width / 2, cy = canvas.height / 2;
+  state.radarTargets.forEach(t => {
+    const dx = t.x - state.you.x, dy = t.y - state.you.y;
+    const ang = Math.atan2(dy, dx);
+    const edgeX = cx + Math.cos(ang) * (Math.min(canvas.width, canvas.height) / 2 - 40);
+    const edgeY = cy + Math.sin(ang) * (Math.min(canvas.width, canvas.height) / 2 - 40);
+    const arrow = document.createElement('div');
+    arrow.style.left = edgeX + 'px';
+    arrow.style.top = edgeY + 'px';
+    arrow.style.transform = `rotate(${ang + Math.PI / 2}rad)`;
+    container.appendChild(arrow);
+  });
+}
+
+// ---------- Rendering ----------
+function drawBackground(camX, camY) {
+  // deep-space style gradient + starfield + grid
+  const grad = ctx.createRadialGradient(canvas.width/2, canvas.height/2, 50, canvas.width/2, canvas.height/2, canvas.width);
+  grad.addColorStop(0, '#161d29');
+  grad.addColorStop(1, '#090b10');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
   const gridSize = 100;
   ctx.strokeStyle = 'rgba(255,255,255,0.05)';
   ctx.lineWidth = 1;
-  const startX = -(camX % gridSize);
-  const startY = -(camY % gridSize);
-  for (let x = startX; x < canvas.width; x += gridSize) {
-    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
-  }
-  for (let y = startY; y < canvas.height; y += gridSize) {
-    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
-  }
+  const startX = -(camX % gridSize), startY = -(camY % gridSize);
+  for (let x = startX; x < canvas.width; x += gridSize) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke(); }
+  for (let y = startY; y < canvas.height; y += gridSize) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke(); }
 }
 
 function render() {
   requestAnimationFrame(render);
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  if (!latestState || !latestState.you) return;
+  if (!latestState || !latestState.you) {
+    ctx.fillStyle = '#0d1117';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    return;
+  }
 
   const camX = latestState.you.x - canvas.width / 2;
   const camY = latestState.you.y - canvas.height / 2;
+  drawBackground(camX, camY);
 
-  drawGrid(camX, camY);
-
-  // world border
   ctx.strokeStyle = '#ff5e5e';
   ctx.lineWidth = 4;
   ctx.strokeRect(-camX, -camY, worldSize, worldSize);
 
-  // food
+  // food as emoji
+  ctx.font = '20px Segoe UI Emoji, Segoe UI, Arial';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   for (const f of latestState.food) {
     const sx = f.x - camX, sy = f.y - camY;
-    if (sx < -20 || sx > canvas.width + 20 || sy < -20 || sy > canvas.height + 20) continue;
-    ctx.beginPath();
-    ctx.arc(sx, sy, f.r, 0, Math.PI * 2);
-    ctx.fillStyle = f.color;
-    ctx.shadowBlur = 8;
-    ctx.shadowColor = f.color;
-    ctx.fill();
-    ctx.shadowBlur = 0;
+    if (sx < -30 || sx > canvas.width + 30 || sy < -30 || sy > canvas.height + 30) continue;
+    if (f.kind !== 'normal') {
+      ctx.beginPath(); ctx.arc(sx, sy, 14, 0, Math.PI * 2);
+      ctx.fillStyle = f.color + '55'; ctx.fill();
+    }
+    ctx.fillText(f.emoji, sx, sy);
   }
 
   // worms
   for (const w of latestState.worms) {
-    ctx.fillStyle = w.color;
+    const colors = w.colors || ['#5ecbff'];
     for (let i = w.segments.length - 1; i >= 0; i--) {
       const s = w.segments[i];
       const sx = s.x - camX, sy = s.y - camY;
-      const radius = i === 0 ? 10 : 8;
+      const radius = i === 0 ? 11 : 8;
       ctx.beginPath();
       ctx.arc(sx, sy, radius, 0, Math.PI * 2);
+      ctx.fillStyle = colors[i % colors.length];
+      if (w.invincible) { ctx.shadowBlur = 14; ctx.shadowColor = '#5ecbff'; }
       ctx.fill();
+      ctx.shadowBlur = 0;
     }
-    // name label above head
     const head = w.segments[0];
+    const hx = head.x - camX, hy = head.y - camY;
     ctx.fillStyle = '#fff';
     ctx.font = '13px Segoe UI';
-    ctx.textAlign = 'center';
-    ctx.fillText(w.name, head.x - camX, head.y - camY - 20);
+    ctx.fillText(w.name, hx, hy - 22);
+    if (w.accessory) {
+      ctx.font = '18px Segoe UI Emoji';
+      ctx.fillText(w.accessory, hx, hy - 8);
+    }
+    ctx.font = '20px Segoe UI Emoji, Segoe UI, Arial';
   }
 
   // minimap
@@ -246,11 +418,11 @@ function render() {
   const scale = minimap.width / worldSize;
   for (const w of latestState.worms) {
     const head = w.segments[0];
-    mctx.fillStyle = w.color;
-    mctx.beginPath();
-    mctx.arc(head.x * scale, head.y * scale, 3, 0, Math.PI * 2);
-    mctx.fill();
+    mctx.fillStyle = (w.colors && w.colors[0]) || '#5ecbff';
+    mctx.beginPath(); mctx.arc(head.x * scale, head.y * scale, 3, 0, Math.PI * 2); mctx.fill();
   }
+  mctx.fillStyle = '#fff';
+  mctx.beginPath(); mctx.arc(latestState.you.x * scale, latestState.you.y * scale, 4, 0, Math.PI * 2); mctx.fill();
 }
 render();
 </script>
