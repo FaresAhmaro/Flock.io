@@ -1,503 +1,284 @@
 ```javascript
 const http = require("http");
+const fs = require("fs");
+const path = require("path");
 const WebSocket = require("ws");
-
-/*
-============================================================
-FLOCK.IO
-WORMATE-STYLE MULTIPLAYER SERVER
-============================================================
-
-Run:
-
-    npm install ws
-    node server.js
-
-The server provides:
-
-- WebSocket multiplayer
-- Sheep / Wolf roles
-- Worm movement
-- Food
-- Growth
-- Hunger
-- Powerups
-- Boost
-- Radar
-- Shield
-- Magnet
-- Shadow
-- Collision
-- Death
-- Food drops
-- Leaderboard
-- King system
-============================================================
-*/
-
-
-/* ============================================================
-   SERVER
-============================================================ */
 
 const PORT = process.env.PORT || 3000;
 
-const server = http.createServer((req, res) => {
-
-    if (req.url === "/health") {
-
-        res.writeHead(200, {
-            "Content-Type": "application/json"
-        });
-
-        res.end(JSON.stringify({
-            ok: true,
-            players: players.size,
-            food: foods.length
-        }));
-
-        return;
-    }
-
-    res.writeHead(200, {
-        "Content-Type": "text/html"
-    });
-
-    res.end(`
-        <html>
-        <head>
-            <title>Flock.io Server</title>
-        </head>
-        <body style="font-family:Arial;background:#111;color:white">
-            <h1>🐑 Flock.io Server Online</h1>
-            <p>Players: ${players.size}</p>
-            <p>Food: ${foods.length}</p>
-        </body>
-        </html>
-    `);
-
-});
-
-
-const wss = new WebSocket.Server({
-    server
-});
-
-
-server.listen(PORT, () => {
-
-    console.log(`
-========================================
-🐑 FLOCK.IO SERVER
-========================================
-
-Server running on port ${PORT}
-
-WebSocket:
-ws://localhost:${PORT}
-
-========================================
-`);
-
-});
-
-
-/* ============================================================
-   WORLD
-============================================================ */
+/* =========================================================
+   WORLD SETTINGS
+========================================================= */
 
 const WORLD = {
     w: 6000,
     h: 6000
 };
 
-
-/* ============================================================
-   GAME SETTINGS
-============================================================ */
-
 const SETTINGS = {
-
-    tickRate: 30,
-
-    stateRate: 15,
-
     maxPlayers: 500,
 
-    maxFood: 900,
+    tickRate: 30,
+    stateRate: 15,
 
-    startingMassSheep: 100,
-
-    startingMassWolf: 250,
-
-    sheepSpeed: 4.3,
-
-    wolfSpeed: 4.8,
-
-    boostSpeedMultiplier: 1.65,
-
-    boostDrainPerSecond: 0.35,
-
-    growthPerMass: 1,
+    maxFood: 1000,
 
     hungerTime: 300000,
 
     boostTime: 300000,
-
     radarTime: 300000,
-
     shieldTime: 300000,
-
     magnetTime: 300000,
 
-    shadowTime: 300000,
+    sheepStartMass: 100,
+    wolfStartMass: 250,
 
-    foodDropMultiplier: 0.45,
+    sheepSpeed: 4.2,
+    wolfSpeed: 4.8,
 
-    collisionPadding: 0.7,
+    boostMultiplier: 1.65,
 
-    foodSpawnBatch: 15,
-
-    broadcastRadius: 2500
-
+    broadcastRadius: 3200
 };
 
 
-/* ============================================================
-   DATA
-============================================================ */
+/* =========================================================
+   FOOD
+========================================================= */
 
-const players = new Map();
-
-const foods = [];
-
-let nextPlayerId = 1;
-
-let nextFoodId = 1;
-
-
-/* ============================================================
-   FOOD TYPES
-============================================================ */
-
-const FOOD_TYPES = {
-
-    grass: {
-        value: 5,
-        color: "#78d84d",
-        chance: 30
-    },
-
-    apple: {
-        value: 15,
-        chance: 16
-    },
-
-    corn: {
-        value: 20,
-        chance: 12
-    },
-
-    noodles: {
-        value: 25,
-        chance: 8
-    },
-
-    momo: {
-        value: 30,
-        chance: 7
-    },
-
-    sushi: {
-        value: 35,
-        chance: 6
-    },
-
-    sashimi: {
-        value: 40,
-        chance: 5
-    },
-
-    burger: {
-        value: 60,
-        chance: 4
-    },
-
-    pizza: {
-        value: 70,
-        chance: 3
-    },
-
-    donut: {
-        value: 80,
-        chance: 2
-    },
+const FOOD = {
+    grass:   { value: 5 },
+    apple:   { value: 15 },
+    corn:    { value: 20 },
+    noodles: { value: 25 },
+    momo:    { value: 30 },
+    sushi:   { value: 35 },
+    sashimi: { value: 40 },
+    burger:  { value: 60 },
+    pizza:   { value: 70 },
+    donut:   { value: 80 },
 
     golden: {
         value: 150,
-        boost: "golden",
-        chance: 1.5
+        effect: "golden"
     },
 
     energy: {
         value: 25,
-        boost: "energy",
-        chance: 1.5
+        effect: "energy"
     },
 
     turbo: {
         value: 20,
-        boost: "turbo",
-        chance: 1
+        effect: "turbo"
     },
 
     eagleeye: {
         value: 15,
-        boost: "eagleeye",
-        chance: 1
+        effect: "radar"
     },
 
     shield: {
         value: 15,
-        boost: "shield",
-        chance: 1
+        effect: "shield"
     },
 
     magnet: {
         value: 15,
-        boost: "magnet",
-        chance: 1
+        effect: "magnet"
     }
-
 };
 
+const foodKeys = Object.keys(FOOD);
 
-/* ============================================================
-   UTILITIES
-============================================================ */
+
+/* =========================================================
+   DATA
+========================================================= */
+
+const players = new Map();
+const foods = [];
+
+let nextPlayerId = 1;
+let nextFoodId = 1;
+
+
+/* =========================================================
+   HELPERS
+========================================================= */
 
 function random(min, max) {
-
     return Math.random() * (max - min) + min;
-
 }
-
 
 function randomInt(min, max) {
-
-    return Math.floor(
-        random(min, max + 1)
-    );
-
+    return Math.floor(random(min, max + 1));
 }
 
+function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+}
 
 function distance(a, b) {
-
     return Math.hypot(
         a.x - b.x,
         a.y - b.y
     );
-
 }
-
-
-function clamp(value, min, max) {
-
-    return Math.max(
-        min,
-        Math.min(max, value)
-    );
-
-}
-
 
 function normalize(x, y) {
+    const d = Math.hypot(x, y);
 
-    const length =
-        Math.hypot(x, y) || 1;
+    if (d < 0.0001) {
+        return {
+            x: 0,
+            y: 0
+        };
+    }
 
     return {
-        x: x / length,
-        y: y / length
+        x: x / d,
+        y: y / d
     };
-
 }
 
 
-function createId(prefix) {
-
-    return (
-        prefix +
-        Math.random()
-            .toString(36)
-            .slice(2, 8) +
-        Date.now()
-            .toString(36)
-    );
-
-}
-
-
-/* ============================================================
-   FOOD RANDOMIZER
-============================================================ */
+/* =========================================================
+   FOOD TYPE
+========================================================= */
 
 function randomFoodType() {
 
-    const entries =
-        Object.entries(FOOD_TYPES);
+    const roll = Math.random();
 
-    let total = 0;
+    if (roll < 0.01) return "golden";
+    if (roll < 0.025) return "energy";
+    if (roll < 0.04) return "turbo";
+    if (roll < 0.055) return "eagleeye";
+    if (roll < 0.07) return "shield";
+    if (roll < 0.085) return "magnet";
 
-    for (const [, type] of entries) {
+    const normal = [
+        "grass",
+        "apple",
+        "apple",
+        "corn",
+        "corn",
+        "noodles",
+        "momo",
+        "sushi",
+        "sashimi",
+        "burger",
+        "pizza",
+        "donut"
+    ];
 
-        total += type.chance;
-
-    }
-
-    let roll =
-        Math.random() * total;
-
-    for (const [key, type] of entries) {
-
-        roll -= type.chance;
-
-        if (roll <= 0) {
-
-            return key;
-
-        }
-
-    }
-
-    return "grass";
-
+    return normal[
+        randomInt(0, normal.length - 1)
+    ];
 }
 
 
-/* ============================================================
+/* =========================================================
    SPAWN FOOD
-============================================================ */
+========================================================= */
 
 function spawnFood(x, y, key) {
 
-    if (foods.length >= SETTINGS.maxFood)
+    if (foods.length >= SETTINGS.maxFood) {
         return null;
+    }
 
-
-    const type =
+    const foodKey =
         key || randomFoodType();
 
+    const type =
+        FOOD[foodKey] || FOOD.grass;
 
     const food = {
-
         id: nextFoodId++,
 
-        x:
-            clamp(
-                x ?? random(40, WORLD.w - 40),
-                20,
-                WORLD.w - 20
-            ),
+        x: clamp(
+            typeof x === "number"
+                ? x
+                : random(40, WORLD.w - 40),
+            20,
+            WORLD.w - 20
+        ),
 
-        y:
-            clamp(
-                y ?? random(40, WORLD.h - 40),
-                20,
-                WORLD.h - 20
-            ),
+        y: clamp(
+            typeof y === "number"
+                ? y
+                : random(40, WORLD.h - 40),
+            20,
+            WORLD.h - 20
+        ),
 
-        key: type,
+        key: foodKey,
 
-        value:
-            FOOD_TYPES[type].value
-
+        value: type.value
     };
-
 
     foods.push(food);
 
     return food;
-
 }
 
 
-/* ============================================================
+/* =========================================================
    INITIAL FOOD
-============================================================ */
+========================================================= */
 
-for (
-    let i = 0;
-    i < SETTINGS.maxFood;
-    i++
-) {
-
+for (let i = 0; i < SETTINGS.maxFood; i++) {
     spawnFood();
-
 }
 
 
-/* ============================================================
-   PLAYER CREATION
-============================================================ */
+/* =========================================================
+   PLAYER
+========================================================= */
 
 function createPlayer(ws) {
-
-    const id =
-        String(nextPlayerId++);
-
-
-    /*
-    Alternate roles.
-
-    You can later replace this with
-    proper role balancing.
-    */
 
     let sheepCount = 0;
     let wolfCount = 0;
 
     for (const p of players.values()) {
 
-        if (p.role === "sheep")
-            sheepCount++;
-
-        if (p.role === "wolf")
-            wolfCount++;
-
+        if (p.role === "sheep") sheepCount++;
+        if (p.role === "wolf") wolfCount++;
     }
 
+    /*
+      Keep teams reasonably balanced.
+    */
 
     let role;
 
     if (sheepCount === 0) {
-
         role = "sheep";
-
     }
     else if (wolfCount === 0) {
-
         role = "wolf";
-
+    }
+    else if (sheepCount < wolfCount) {
+        role = "sheep";
+    }
+    else if (wolfCount < sheepCount) {
+        role = "wolf";
     }
     else {
-
         role =
-            sheepCount <= wolfCount
+            Math.random() < 0.5
                 ? "sheep"
                 : "wolf";
-
     }
 
-
-    const isWolf =
-        role === "wolf";
-
+    const isWolf = role === "wolf";
 
     const player = {
 
-        id,
+        id: String(nextPlayerId++),
 
         ws,
 
@@ -506,58 +287,46 @@ function createPlayer(ws) {
                 ? "Wolf"
                 : "Sheep",
 
-
         flag: "🌍",
-
 
         role,
 
-
         alive: true,
 
+        x: random(
+            300,
+            WORLD.w - 300
+        ),
 
-        x:
-            random(
-                500,
-                WORLD.w - 500
-            ),
-
-        y:
-            random(
-                500,
-                WORLD.h - 500
-            ),
-
+        y: random(
+            300,
+            WORLD.h - 300
+        ),
 
         vx: 0,
         vy: 0,
 
-
         input: {
-
             dx: 0,
             dy: 0,
             boost: false
-
         },
-
 
         mass:
             isWolf
-                ? SETTINGS.startingMassWolf
-                : SETTINGS.startingMassSheep,
-
+                ? SETTINGS.wolfStartMass
+                : SETTINGS.sheepStartMass,
 
         score: 0,
 
+        kills: 0,
 
         hungerMs:
             SETTINGS.hungerTime,
 
-
         boostMsLeft: 0,
-        boostType: null,
 
+        boostType: null,
 
         visionMsLeft: 0,
 
@@ -567,67 +336,23 @@ function createPlayer(ws) {
 
         shadowMsLeft: 0,
 
-
         shadow: false,
 
-
-        bodyLength: 10,
-
-
-        lastUpdate: Date.now(),
-
-
-        lastEat: 0,
-
-
-        kills: 0,
-
-
-        createdAt: Date.now()
-
+        lastTick: Date.now()
     };
 
-
-    updateBodyLength(player);
-
-
     players.set(
-        id,
+        player.id,
         player
     );
 
-
     return player;
-
 }
 
 
-/* ============================================================
-   BODY LENGTH
-============================================================ */
-
-function updateBodyLength(player) {
-
-    player.bodyLength =
-        Math.max(
-            8,
-            Math.min(
-                180,
-                Math.floor(
-                    8 +
-                    Math.sqrt(
-                        player.mass
-                    ) * 1.9
-                )
-            )
-        );
-
-}
-
-
-/* ============================================================
-   PLAYER RADIUS
-============================================================ */
+/* =========================================================
+   PLAYER SIZE
+========================================================= */
 
 function playerRadius(player) {
 
@@ -635,7 +360,6 @@ function playerRadius(player) {
         player.role === "wolf"
             ? 22
             : 15;
-
 
     const scale =
         Math.min(
@@ -650,15 +374,13 @@ function playerRadius(player) {
                 : 2.8
         );
 
-
     return base * scale;
-
 }
 
 
-/* ============================================================
+/* =========================================================
    PLAYER SPEED
-============================================================ */
+========================================================= */
 
 function playerSpeed(player) {
 
@@ -667,44 +389,35 @@ function playerSpeed(player) {
             ? SETTINGS.wolfSpeed
             : SETTINGS.sheepSpeed;
 
-
     if (player.boostMsLeft > 0) {
-
-        speed *=
-            SETTINGS.boostSpeedMultiplier;
-
+        speed *= SETTINGS.boostMultiplier;
     }
 
-
     /*
-    Large worms are slightly slower.
+      Bigger worms become slightly slower.
     */
 
-    const massPenalty =
+    const penalty =
         Math.min(
-            0.35,
+            0.30,
             player.mass / 100000
         );
 
-
-    speed *=
-        1 - massPenalty;
-
+    speed *= (1 - penalty);
 
     return speed;
-
 }
 
 
-/* ============================================================
-   APPLY INPUT
-============================================================ */
+/* =========================================================
+   MOVEMENT
+========================================================= */
 
-function updatePlayerMovement(player, dt) {
+function updateMovement(player, dt) {
 
-    if (!player.alive)
+    if (!player.alive) {
         return;
-
+    }
 
     let dx =
         Number(player.input.dx) || 0;
@@ -712,61 +425,53 @@ function updatePlayerMovement(player, dt) {
     let dy =
         Number(player.input.dy) || 0;
 
-
     /*
-    Prevent clients from sending absurd values.
+      Normalize client input.
     */
 
-    dx =
-        clamp(dx, -1000, 1000);
+    const direction =
+        normalize(dx, dy);
 
-    dy =
-        clamp(dy, -1000, 1000);
+    dx = direction.x;
+    dy = direction.y;
 
+    if (dx === 0 && dy === 0) {
 
-    const length =
-        Math.hypot(dx, dy);
+        player.vx *= 0.80;
+        player.vy *= 0.80;
 
+        player.x += player.vx * dt;
+        player.y += player.vy * dt;
 
-    if (length < 1) {
-
-        player.vx *= 0.82;
-        player.vy *= 0.82;
+        keepInsideWorld(player);
 
         return;
-
     }
-
-
-    dx /= length;
-    dy /= length;
-
 
     const speed =
         playerSpeed(player);
 
-
     /*
-    Smooth acceleration.
+      Smooth movement.
     */
 
     const acceleration =
-        0.45;
-
+        Math.min(
+            1,
+            0.25 * dt
+        );
 
     player.vx +=
         (dx * speed - player.vx) *
         acceleration;
 
-
     player.vy +=
         (dy * speed - player.vy) *
         acceleration;
 
-
-    const maxSpeed =
-        speed;
-
+    /*
+      Speed limit.
+    */
 
     const velocity =
         Math.hypot(
@@ -774,486 +479,478 @@ function updatePlayerMovement(player, dt) {
             player.vy
         );
 
-
-    if (velocity > maxSpeed) {
+    if (velocity > speed) {
 
         player.vx =
             player.vx /
             velocity *
-            maxSpeed;
+            speed;
 
         player.vy =
             player.vy /
             velocity *
-            maxSpeed;
-
+            speed;
     }
-
 
     player.x +=
         player.vx * dt;
 
-
     player.y +=
         player.vy * dt;
 
-
-    /*
-    World boundary.
-    */
-
-    const radius =
-        playerRadius(player);
-
-
-    if(player.x < radius){
-
-        player.x = radius;
-        player.vx *= -0.3;
-
-    }
-
-
-    if(player.y < radius){
-
-        player.y = radius;
-        player.vy *= -0.3;
-
-    }
-
-
-    if(player.x > WORLD.w-radius){
-
-        player.x =
-            WORLD.w-radius;
-
-        player.vx *= -0.3;
-
-    }
-
-
-    if(player.y > WORLD.h-radius){
-
-        player.y =
-            WORLD.h-radius;
-
-        player.vy *= -0.3;
-
-    }
-
+    keepInsideWorld(player);
 }
 
 
-/* ============================================================
+/* =========================================================
+   WORLD BOUNDARY
+========================================================= */
+
+function keepInsideWorld(player) {
+
+    const r =
+        playerRadius(player);
+
+    if (player.x < r) {
+        player.x = r;
+        player.vx = Math.abs(player.vx) * 0.2;
+    }
+
+    if (player.y < r) {
+        player.y = r;
+        player.vy = Math.abs(player.vy) * 0.2;
+    }
+
+    if (player.x > WORLD.w - r) {
+        player.x = WORLD.w - r;
+        player.vx = -Math.abs(player.vx) * 0.2;
+    }
+
+    if (player.y > WORLD.h - r) {
+        player.y = WORLD.h - r;
+        player.vy = -Math.abs(player.vy) * 0.2;
+    }
+}
+
+
+/* =========================================================
    BOOST
-============================================================ */
+========================================================= */
 
 function updateBoost(player, dt) {
 
-    if(!player.input.boost)
-        return;
+    if (!player.alive) return;
 
+    if (!player.input.boost) return;
 
-    if(player.boostMsLeft > 0)
-        return;
-
+    if (player.mass <= 35) return;
 
     /*
-    Energy cost.
-
-    Mass slowly decreases while boosting.
+      Boost does NOT activate another timer.
+      It consumes mass while held.
     */
 
-    if(player.mass <= 30)
-        return;
-
-
     player.mass -=
-        SETTINGS.boostDrainPerSecond *
-        dt;
+        0.12 * dt;
 
-
-    updateBodyLength(player);
-
+    if (player.mass < 20) {
+        player.mass = 20;
+    }
 }
 
 
-/* ============================================================
+/* =========================================================
    TIMERS
-============================================================ */
+========================================================= */
 
 function updateTimers(player, dtMs) {
 
+    if (!player.alive) return;
+
     player.hungerMs -= dtMs;
 
-
-    if(player.boostMsLeft > 0){
-
-        player.boostMsLeft -= dtMs;
-
-        if(player.boostMsLeft <= 0){
-
-            player.boostMsLeft = 0;
-            player.boostType = null;
-
-        }
-
-    }
-
-
-    if(player.visionMsLeft > 0){
-
-        player.visionMsLeft -= dtMs;
-
-        if(player.visionMsLeft < 0)
-            player.visionMsLeft = 0;
-
-    }
-
-
-    if(player.shieldMsLeft > 0){
-
-        player.shieldMsLeft -= dtMs;
-
-        if(player.shieldMsLeft < 0)
-            player.shieldMsLeft = 0;
-
-    }
-
-
-    if(player.magnetMsLeft > 0){
-
-        player.magnetMsLeft -= dtMs;
-
-        if(player.magnetMsLeft < 0)
-            player.magnetMsLeft = 0;
-
-    }
-
-
-    if(player.shadowMsLeft > 0){
-
-        player.shadowMsLeft -= dtMs;
-
-        if(player.shadowMsLeft <= 0){
-
-            player.shadowMsLeft = 0;
-            player.shadow = false;
-
-        }
-
-    }
-
-
-    /*
-    Hunger death.
-
-    You can change this later to damage
-    instead of instant death.
-    */
-
-    if(player.hungerMs <= 0){
+    if (player.hungerMs <= 0) {
 
         killPlayer(
             player,
-            "hunger"
+            "hunger",
+            null
         );
 
+        return;
     }
 
+    if (player.boostMsLeft > 0) {
+
+        player.boostMsLeft -= dtMs;
+
+        if (player.boostMsLeft <= 0) {
+
+            player.boostMsLeft = 0;
+            player.boostType = null;
+        }
+    }
+
+    if (player.visionMsLeft > 0) {
+
+        player.visionMsLeft -= dtMs;
+
+        if (player.visionMsLeft < 0) {
+            player.visionMsLeft = 0;
+        }
+    }
+
+    if (player.shieldMsLeft > 0) {
+
+        player.shieldMsLeft -= dtMs;
+
+        if (player.shieldMsLeft < 0) {
+            player.shieldMsLeft = 0;
+        }
+    }
+
+    if (player.magnetMsLeft > 0) {
+
+        player.magnetMsLeft -= dtMs;
+
+        if (player.magnetMsLeft < 0) {
+            player.magnetMsLeft = 0;
+        }
+    }
+
+    if (player.shadowMsLeft > 0) {
+
+        player.shadowMsLeft -= dtMs;
+
+        if (player.shadowMsLeft <= 0) {
+
+            player.shadowMsLeft = 0;
+            player.shadow = false;
+        }
+    }
 }
 
 
-/* ============================================================
-   FOOD MAGNET
-============================================================ */
+/* =========================================================
+   MAGNET
+========================================================= */
 
 function updateMagnet(player) {
 
-    if(player.magnetMsLeft <= 0)
+    if (
+        !player.alive ||
+        player.magnetMsLeft <= 0
+    ) {
         return;
-
-
-    const range=220;
-
-
-    for(const food of foods){
-
-        const dx=
-            player.x-food.x;
-
-        const dy=
-            player.y-food.y;
-
-
-        const d=
-            Math.hypot(dx,dy);
-
-
-        if(d<=0 || d>range)
-            continue;
-
-
-        const pull=
-            Math.min(
-                8,
-                180/d
-            );
-
-
-        food.x +=
-            dx/d*pull;
-
-        food.y +=
-            dy/d*pull;
-
     }
 
+    const range = 250;
+
+    for (const food of foods) {
+
+        const dx =
+            player.x - food.x;
+
+        const dy =
+            player.y - food.y;
+
+        const d =
+            Math.hypot(dx, dy);
+
+        if (d <= 1 || d > range) {
+            continue;
+        }
+
+        const force =
+            Math.min(
+                5,
+                180 / d
+            );
+
+        food.x +=
+            dx / d * force;
+
+        food.y +=
+            dy / d * force;
+    }
 }
 
 
-/* ============================================================
-   FOOD COLLISION
-============================================================ */
+/* =========================================================
+   FOOD EFFECT
+========================================================= */
+
+function applyFoodEffect(player, key) {
+
+    const type = FOOD[key];
+
+    if (!type || !type.effect) {
+        return;
+    }
+
+    switch (type.effect) {
+
+        case "golden":
+
+            player.boostMsLeft =
+                SETTINGS.boostTime;
+
+            player.boostType =
+                "golden";
+
+            break;
+
+
+        case "energy":
+
+            player.boostMsLeft =
+                SETTINGS.boostTime;
+
+            player.boostType =
+                "energy";
+
+            break;
+
+
+        case "turbo":
+
+            player.boostMsLeft =
+                SETTINGS.boostTime;
+
+            player.boostType =
+                "turbo";
+
+            break;
+
+
+        case "radar":
+
+            player.visionMsLeft =
+                SETTINGS.radarTime;
+
+            break;
+
+
+        case "shield":
+
+            player.shieldMsLeft =
+                SETTINGS.shieldTime;
+
+            break;
+
+
+        case "magnet":
+
+            player.magnetMsLeft =
+                SETTINGS.magnetTime;
+
+            break;
+    }
+}
+
+
+/* =========================================================
+   EAT FOOD
+========================================================= */
 
 function eatFood(player) {
 
-    if(!player.alive)
-        return;
-
+    if (!player.alive) return;
 
     const radius =
         playerRadius(player);
 
+    const eatingRange =
+        radius + 20;
 
-    for(
-        let i=foods.length-1;
-        i>=0;
+    for (
+        let i = foods.length - 1;
+        i >= 0;
         i--
-    ){
+    ) {
 
-        const food=foods[i];
+        const food = foods[i];
 
+        if (
+            Math.abs(
+                player.x - food.x
+            ) > eatingRange
+        ) {
+            continue;
+        }
 
-        const d=
-            Math.hypot(
-                player.x-food.x,
-                player.y-food.y
+        if (
+            Math.abs(
+                player.y - food.y
+            ) > eatingRange
+        ) {
+            continue;
+        }
+
+        const d =
+            distance(
+                player,
+                food
             );
 
-
-        if(
-            d >
-            radius + 18
-        )
+        if (d > eatingRange) {
             continue;
-
+        }
 
         /*
-        EAT
+          Eat it.
         */
 
-        player.mass +=
-            food.value;
+        player.mass += food.value;
 
+        player.score += food.value;
 
-        player.score +=
-            food.value;
-
+        /*
+          Eating resets hunger.
+        */
 
         player.hungerMs =
             SETTINGS.hungerTime;
-
-
-        player.lastEat =
-            Date.now();
-
 
         applyFoodEffect(
             player,
             food.key
         );
 
-
         foods.splice(
             i,
             1
         );
 
-
         /*
-        Replace food.
+          Replace consumed food.
         */
 
         spawnFood();
-
     }
-
-
-    updateBodyLength(player);
-
 }
 
 
-/* ============================================================
-   FOOD EFFECTS
-============================================================ */
-
-function applyFoodEffect(
-    player,
-    key
-){
-
-    const type =
-        FOOD_TYPES[key];
-
-
-    if(!type)
-        return;
-
-
-    if(
-        key === "golden"
-    ){
-
-        player.boostMsLeft =
-            SETTINGS.boostTime;
-
-        player.boostType =
-            "golden";
-
-    }
-
-
-    if(
-        key === "energy"
-    ){
-
-        player.boostMsLeft =
-            SETTINGS.boostTime;
-
-        player.boostType =
-            "energy";
-
-    }
-
-
-    if(
-        key === "turbo"
-    ){
-
-        player.boostMsLeft =
-            SETTINGS.boostTime;
-
-        player.boostType =
-            "turbo";
-
-    }
-
-
-    if(
-        key === "eagleeye"
-    ){
-
-        player.visionMsLeft =
-            SETTINGS.radarTime;
-
-    }
-
-
-    if(
-        key === "shield"
-    ){
-
-        player.shieldMsLeft =
-            SETTINGS.shieldTime;
-
-    }
-
-
-    if(
-        key === "magnet"
-    ){
-
-        player.magnetMsLeft =
-            SETTINGS.magnetTime;
-
-    }
-
-}
-
-
-/* ============================================================
+/* =========================================================
    PLAYER COLLISION
-============================================================ */
+========================================================= */
 
 function checkPlayerCollisions() {
 
-    const alive =
+    const alivePlayers =
         [...players.values()]
-        .filter(
-            p=>p.alive
-        );
+            .filter(
+                p => p.alive
+            );
 
+    for (
+        let i = 0;
+        i < alivePlayers.length;
+        i++
+    ) {
 
-    for(let i=0;i<alive.length;i++){
+        const a =
+            alivePlayers[i];
 
-        const a=alive[i];
-
-
-        for(
-            let j=i+1;
-            j<alive.length;
+        for (
+            let j = i + 1;
+            j < alivePlayers.length;
             j++
-        ){
+        ) {
 
-            const b=alive[j];
+            const b =
+                alivePlayers[j];
 
-
-            if(!a.alive || !b.alive)
+            if (
+                !a.alive ||
+                !b.alive
+            ) {
                 continue;
-
-
-            const d=
-                Math.hypot(
-                    a.x-b.x,
-                    a.y-b.y
-                );
-
-
-            const ra=
-                playerRadius(a);
-
-
-            const rb=
-                playerRadius(b);
-
+            }
 
             /*
-            Simple head-to-head collision.
-
-            The larger player wins.
+              Very close heads.
             */
 
-            if(
+            const d =
+                distance(a, b);
+
+            const ra =
+                playerRadius(a);
+
+            const rb =
+                playerRadius(b);
+
+            if (
                 d >
-                (ra+rb)*
-                SETTINGS.collisionPadding
-            )
+                (ra + rb) * 0.75
+            ) {
                 continue;
+            }
 
+            /*
+              Shield protects the player.
+            */
 
-            if(
-                a.shieldMsLeft>0 ||
-                b.shieldMsLeft>0
-            )
+            if (
+                a.shieldMsLeft > 0 ||
+                b.shieldMsLeft > 0
+            ) {
                 continue;
+            }
 
+            /*
+              Wolf can hunt sheep.
+            */
 
-            if(
-                a.mass >=
-                b.mass*1.05
-            ){
+            if (
+                a.role === "wolf" &&
+                b.role === "sheep"
+            ) {
+
+                if (
+                    a.mass >=
+                    b.mass * 0.55
+                ) {
+
+                    killPlayer(
+                        b,
+                        "wolf",
+                        a
+                    );
+                }
+
+                continue;
+            }
+
+            if (
+                b.role === "wolf" &&
+                a.role === "sheep"
+            ) {
+
+                if (
+                    b.mass >=
+                    a.mass * 0.55
+                ) {
+
+                    killPlayer(
+                        a,
+                        "wolf",
+                        b
+                    );
+                }
+
+                continue;
+            }
+
+            /*
+              Same-role collision.
+            */
+
+            if (
+                a.mass >
+                b.mass * 1.15
+            ) {
 
                 killPlayer(
                     b,
@@ -1262,319 +959,278 @@ function checkPlayerCollisions() {
                 );
 
             }
-            else if(
-                b.mass >=
-                a.mass*1.05
-            ){
+            else if (
+                b.mass >
+                a.mass * 1.15
+            ) {
 
                 killPlayer(
                     a,
                     "collision",
                     b
                 );
-
             }
-
         }
-
     }
-
 }
 
 
-/* ============================================================
-   KILL PLAYER
-============================================================ */
+/* =========================================================
+   DROP FOOD
+========================================================= */
+
+function dropFood(player) {
+
+    const amount =
+        Math.min(
+            70,
+            Math.floor(
+                player.mass / 10
+            )
+        );
+
+    if (amount <= 0) {
+        return;
+    }
+
+    const value =
+        Math.max(
+            5,
+            player.mass /
+            amount *
+            0.8
+        );
+
+    for (
+        let i = 0;
+        i < amount;
+        i++
+    ) {
+
+        const angle =
+            Math.random() *
+            Math.PI *
+            2;
+
+        const radius =
+            random(
+                25,
+                140
+            );
+
+        let key = "grass";
+
+        if (value >= 70) {
+            key = "donut";
+        }
+        else if (value >= 55) {
+            key = "burger";
+        }
+        else if (value >= 35) {
+            key = "pizza";
+        }
+        else if (value >= 25) {
+            key = "momo";
+        }
+        else if (value >= 15) {
+            key = "apple";
+        }
+
+        spawnFood(
+            player.x +
+            Math.cos(angle) *
+            radius,
+
+            player.y +
+            Math.sin(angle) *
+            radius,
+
+            key
+        );
+    }
+}
+
+
+/* =========================================================
+   KILL
+========================================================= */
 
 function killPlayer(
     player,
     reason,
-    killer=null
-){
+    killer
+) {
 
-    if(!player.alive)
+    if (!player.alive) {
         return;
+    }
 
+    player.alive = false;
 
-    player.alive=false;
+    /*
+      Killer reward.
+    */
 
-
-    if(killer){
+    if (killer && killer.alive) {
 
         killer.kills++;
 
         killer.score +=
             Math.floor(
-                player.mass*.5
+                player.mass * 0.5
             );
 
         killer.mass +=
             Math.floor(
-                player.mass*.25
+                player.mass * 0.25
             );
-
-        updateBodyLength(killer);
-
     }
 
+    dropFood(player);
 
     /*
-    Drop food around death location.
+      Respawn.
     */
 
-    const dropCount =
-        Math.min(
-            80,
-            Math.floor(
-                player.mass *
-                SETTINGS.foodDropMultiplier /
-                10
-            )
-        );
+    setTimeout(() => {
 
-
-    for(
-        let i=0;
-        i<dropCount;
-        i++
-    ){
-
-        const angle=
-            Math.random()*
-            Math.PI*2;
-
-
-        const distance=
-            random(
-                20,
-                100
-            );
-
-
-        const value=
-            Math.max(
-                5,
-                Math.floor(
-                    player.mass/
-                    dropCount
-                )
-            );
-
-
-        let key="grass";
-
-
-        if(value>=80)
-            key="donut";
-        else if(value>=60)
-            key="burger";
-        else if(value>=40)
-            key="pizza";
-        else if(value>=25)
-            key="momo";
-        else if(value>=15)
-            key="apple";
-
-
-        spawnFood(
-            player.x+
-            Math.cos(angle)*
-            distance,
-
-            player.y+
-            Math.sin(angle)*
-            distance,
-
-            key
-        );
-
-    }
-
-
-    console.log(
-        `Player ${player.id} died: ${reason}`
-    );
-
-
-    /*
-    Respawn after delay.
-
-    For a real competitive game you may
-    want a lobby instead.
-    */
-
-    setTimeout(()=>{
-
-        if(!players.has(player.id))
+        if (!players.has(player.id)) {
             return;
-
-
-        respawnPlayer(player);
-
-    },3000);
-
-}
-
-
-/* ============================================================
-   RESPAWN
-============================================================ */
-
-function respawnPlayer(player){
-
-    player.alive=true;
-
-
-    player.x=
-        random(
-            500,
-            WORLD.w-500
-        );
-
-
-    player.y=
-        random(
-            500,
-            WORLD.h-500
-        );
-
-
-    player.vx=0;
-    player.vy=0;
-
-
-    player.mass=
-        player.role==="wolf"
-            ? SETTINGS.startingMassWolf
-            : SETTINGS.startingMassSheep;
-
-
-    player.score=0;
-
-    player.kills=0;
-
-
-    player.hungerMs=
-        SETTINGS.hungerTime;
-
-
-    player.boostMsLeft=0;
-    player.boostType=null;
-
-    player.visionMsLeft=0;
-    player.shieldMsLeft=0;
-    player.magnetMsLeft=0;
-    player.shadowMsLeft=0;
-
-    player.shadow=false;
-
-
-    updateBodyLength(player);
-
-}
-
-
-/* ============================================================
-   KING SYSTEM
-============================================================ */
-
-function getKing(role){
-
-    let king=null;
-
-
-    for(const player of players.values()){
-
-        if(
-            !player.alive ||
-            player.role!==role
-        )
-            continue;
-
-
-        if(
-            !king ||
-            player.mass>king.mass
-        ){
-
-            king=player;
-
         }
 
-    }
+        respawn(player);
 
+    }, 3000);
 
-    return king;
-
+    console.log(
+        `Player ${player.id} died (${reason})`
+    );
 }
 
 
-/* ============================================================
-   LEADERBOARD
-============================================================ */
+/* =========================================================
+   RESPAWN
+========================================================= */
 
-function getLeaderboard(){
+function respawn(player) {
 
-    return [...players.values()]
+    player.alive = true;
 
-        .filter(
-            p=>p.alive
-        )
-
-        .sort(
-            (a,b)=>
-                b.mass-a.mass
-        )
-
-        .slice(
-            0,
-            10
-        )
-
-        .map(
-            p=>({
-
-                id:p.id,
-
-                name:p.name,
-
-                flag:p.flag,
-
-                role:p.role,
-
-                mass:Math.floor(
-                    p.mass
-                )
-
-            })
+    player.x =
+        random(
+            300,
+            WORLD.w - 300
         );
 
+    player.y =
+        random(
+            300,
+            WORLD.h - 300
+        );
+
+    player.vx = 0;
+    player.vy = 0;
+
+    player.mass =
+        player.role === "wolf"
+            ? SETTINGS.wolfStartMass
+            : SETTINGS.sheepStartMass;
+
+    player.score = 0;
+    player.kills = 0;
+
+    player.hungerMs =
+        SETTINGS.hungerTime;
+
+    player.boostMsLeft = 0;
+    player.boostType = null;
+
+    player.visionMsLeft = 0;
+    player.shieldMsLeft = 0;
+    player.magnetMsLeft = 0;
+    player.shadowMsLeft = 0;
+
+    player.shadow = false;
 }
 
 
-/* ============================================================
-   SERIALIZE PLAYER
-============================================================ */
+/* =========================================================
+   KING
+========================================================= */
 
-function serializePlayer(player){
+function getKing(role) {
+
+    let king = null;
+
+    for (const player of players.values()) {
+
+        if (
+            !player.alive ||
+            player.role !== role
+        ) {
+            continue;
+        }
+
+        if (
+            !king ||
+            player.mass > king.mass
+        ) {
+            king = player;
+        }
+    }
+
+    return king;
+}
+
+
+/* =========================================================
+   LEADERBOARD
+========================================================= */
+
+function getLeaderboard() {
+
+    return [...players.values()]
+        .filter(
+            p => p.alive
+        )
+        .sort(
+            (a, b) =>
+                b.mass - a.mass
+        )
+        .slice(0, 10)
+        .map(p => ({
+            id: p.id,
+            name: p.name,
+            flag: p.flag,
+            role: p.role,
+            mass: Math.floor(p.mass)
+        }));
+}
+
+
+/* =========================================================
+   PLAYER SERIALIZATION
+========================================================= */
+
+function serializePlayer(player) {
 
     return {
 
-        id:player.id,
+        id: player.id,
 
-        name:player.name,
+        name: player.name,
 
-        flag:player.flag,
+        flag: player.flag,
 
-        role:player.role,
+        role: player.role,
 
-        alive:player.alive,
+        alive: player.alive,
 
-        x:Math.round(player.x*10)/10,
+        x: Math.round(player.x * 10) / 10,
 
-        y:Math.round(player.y*10)/10,
+        y: Math.round(player.y * 10) / 10,
 
-        mass:Math.floor(player.mass),
+        mass: Math.floor(player.mass),
 
         hungerMs:
             Math.max(
@@ -1629,530 +1285,610 @@ function serializePlayer(player){
 
         shadow:
             player.shadow
-
     };
-
 }
 
 
-/* ============================================================
-   SERIALIZE FOOD
-============================================================ */
+/* =========================================================
+   FOOD SERIALIZATION
+========================================================= */
 
-function serializeFood(food){
+function serializeFood(food) {
 
     return {
+        id: food.id,
 
-        id:food.id,
+        x: Math.round(food.x * 10) / 10,
 
-        x:Math.round(food.x*10)/10,
+        y: Math.round(food.y * 10) / 10,
 
-        y:Math.round(food.y*10)/10,
+        key: food.key,
 
-        key:food.key,
-
-        value:food.value
-
+        value: food.value
     };
-
 }
 
 
-/* ============================================================
-   NEARBY FOOD
-============================================================ */
+/* =========================================================
+   NEARBY PLAYERS
+========================================================= */
 
-function getNearbyFoods(player){
+function getNearbyPlayers(player) {
 
     const radius =
         SETTINGS.broadcastRadius;
 
+    const result = [];
+
+    for (const other of players.values()) {
+
+        if (
+            other.id !== player.id &&
+            !other.alive
+        ) {
+            continue;
+        }
+
+        /*
+          Shadow players cannot normally
+          be seen without radar.
+        */
+
+        if (
+            other.id !== player.id &&
+            other.shadow &&
+            player.visionMsLeft <= 0
+        ) {
+            continue;
+        }
+
+        if (
+            Math.abs(
+                other.x - player.x
+            ) > radius
+        ) {
+            continue;
+        }
+
+        if (
+            Math.abs(
+                other.y - player.y
+            ) > radius
+        ) {
+            continue;
+        }
+
+        result.push(
+            serializePlayer(other)
+        );
+    }
+
+    return result;
+}
+
+
+/* =========================================================
+   NEARBY FOOD
+========================================================= */
+
+function getNearbyFood(player) {
+
+    const radius =
+        SETTINGS.broadcastRadius;
 
     return foods
-
-        .filter(food=>{
+        .filter(food => {
 
             return (
                 Math.abs(
-                    food.x-player.x
+                    food.x - player.x
                 ) <= radius
                 &&
                 Math.abs(
-                    food.y-player.y
+                    food.y - player.y
                 ) <= radius
             );
 
         })
-
         .map(
             serializeFood
         );
-
 }
 
 
-/* ============================================================
-   NEARBY PLAYERS
-============================================================ */
-
-function getNearbyPlayers(player){
-
-    const radius =
-        SETTINGS.broadcastRadius;
-
-
-    return [...players.values()]
-
-        .filter(other=>{
-
-            if(
-                other.id===player.id
-            )
-                return true;
-
-
-            /*
-            Dead players are not rendered.
-            */
-
-            if(!other.alive)
-                return false;
-
-
-            /*
-            Shadow players are hidden unless
-            the receiving player has radar.
-            */
-
-            if(
-                other.shadow &&
-                player.visionMsLeft<=0
-            ){
-
-                return false;
-
-            }
-
-
-            return (
-                Math.abs(
-                    other.x-player.x
-                )<=radius
-                &&
-                Math.abs(
-                    other.y-player.y
-                )<=radius
-            );
-
-        })
-
-        .map(
-            serializePlayer
-        );
-
-}
-
-
-/* ============================================================
+/* =========================================================
    SEND STATE
-============================================================ */
+========================================================= */
 
-function sendState(player){
+function sendState(player) {
 
-    if(
+    if (
         !player.ws ||
         player.ws.readyState !==
         WebSocket.OPEN
-    )
+    ) {
         return;
+    }
 
-
-    const kingSheep =
+    const sheepKing =
         getKing("sheep");
 
-
-    const kingWolf =
+    const wolfKing =
         getKing("wolf");
 
+    const packet = {
 
-    const message={
-
-        type:"state",
-
+        type: "state",
 
         players:
             getNearbyPlayers(player),
 
-
         foods:
-            getNearbyFoods(player),
-
+            getNearbyFood(player),
 
         kingSheepId:
-            kingSheep
-                ? kingSheep.id
+            sheepKing
+                ? sheepKing.id
                 : null,
-
 
         kingWolfId:
-            kingWolf
-                ? kingWolf.id
+            wolfKing
+                ? wolfKing.id
                 : null,
-
 
         leaderboard:
             getLeaderboard()
-
     };
 
-
-    try{
+    try {
 
         player.ws.send(
-            JSON.stringify(message)
+            JSON.stringify(packet)
         );
 
-    }catch(err){
+    }
+    catch (error) {
 
         console.error(
-            "Send state error",
-            err
+            "WebSocket send error:",
+            error.message
         );
-
     }
-
 }
 
 
-/* ============================================================
-   BROADCAST
-============================================================ */
+/* =========================================================
+   HTTP SERVER
+========================================================= */
 
-function broadcastState(){
-
-    for(const player of players.values()){
-
-        sendState(player);
-
-    }
-
-}
-
-
-/* ============================================================
-   CONNECTION
-============================================================ */
-
-wss.on("connection",(ws,req)=>{
-
-    if(
-        players.size >=
-        SETTINGS.maxPlayers
-    ){
-
-        ws.close(
-            1013,
-            "Server full"
-        );
-
-        return;
-
-    }
-
-
-    const player=
-        createPlayer(ws);
-
-
-    console.log(
-        `Player connected: ${player.id} (${player.role})`
-    );
-
-
-    /*
-    Welcome packet.
-    */
-
-    ws.send(
-        JSON.stringify({
-
-            type:"welcome",
-
-            id:player.id,
-
-            world:WORLD,
-
-            hungerLimitMs:
-                SETTINGS.hungerTime
-
-        })
-    );
-
-
-    /*
-    INPUT
-    */
-
-    ws.on("message",data=>{
-
-        try{
-
-            const msg=
-                JSON.parse(
-                    data.toString()
-                );
-
-
-            if(
-                msg.type!=="input"
-            )
-                return;
-
+const httpServer =
+    http.createServer(
+        (req, res) => {
 
             /*
-            Server-side validation.
+              Health check.
             */
 
-            player.input.dx=
-                clamp(
-                    Number(msg.dx)||0,
-                    -1000,
-                    1000
+            if (req.url === "/health") {
+
+                res.writeHead(
+                    200,
+                    {
+                        "Content-Type":
+                            "application/json"
+                    }
                 );
 
-
-            player.input.dy=
-                clamp(
-                    Number(msg.dy)||0,
-                    -1000,
-                    1000
+                res.end(
+                    JSON.stringify({
+                        online: true,
+                        players:
+                            players.size,
+                        food:
+                            foods.length
+                    })
                 );
 
+                return;
+            }
 
-            player.input.boost=
-                Boolean(
-                    msg.boost
+            /*
+              Serve index.html.
+            */
+
+            const file =
+                path.join(
+                    __dirname,
+                    "index.html"
                 );
 
+            fs.readFile(
+                file,
+                (err, data) => {
 
-        }catch(err){
+                    if (err) {
 
-            console.log(
-                "Invalid input packet"
+                        res.writeHead(
+                            500,
+                            {
+                                "Content-Type":
+                                    "text/plain"
+                            }
+                        );
+
+                        res.end(
+                            "index.html not found"
+                        );
+
+                        return;
+                    }
+
+                    res.writeHead(
+                        200,
+                        {
+                            "Content-Type":
+                                "text/html"
+                        }
+                    );
+
+                    res.end(data);
+                }
+            );
+        }
+    );
+
+
+/* =========================================================
+   WEBSOCKET SERVER
+========================================================= */
+
+const wss =
+    new WebSocket.Server({
+        server: httpServer
+    });
+
+
+wss.on(
+    "connection",
+    (ws) => {
+
+        if (
+            players.size >=
+            SETTINGS.maxPlayers
+        ) {
+
+            ws.close(
+                1013,
+                "Server full"
             );
 
+            return;
         }
 
-    });
-
-
-    /*
-    Disconnect
-    */
-
-    ws.on("close",()=>{
-
-        players.delete(
-            player.id
-        );
-
+        const player =
+            createPlayer(ws);
 
         console.log(
-            `Player disconnected: ${player.id}`
+            `CONNECTED: ${player.id} ${player.role}`
         );
 
-    });
 
+        /*
+          WELCOME
+        */
 
-    ws.on("error",()=>{
+        ws.send(
+            JSON.stringify({
 
-        players.delete(
-            player.id
+                type: "welcome",
+
+                id: player.id,
+
+                world: WORLD,
+
+                hungerLimitMs:
+                    SETTINGS.hungerTime
+            })
         );
 
-    });
 
-});
+        /*
+          INPUT
+        */
+
+        ws.on(
+            "message",
+            data => {
+
+                try {
+
+                    const msg =
+                        JSON.parse(
+                            data.toString()
+                        );
+
+                    if (
+                        msg.type !==
+                        "input"
+                    ) {
+                        return;
+                    }
+
+                    let dx =
+                        Number(msg.dx);
+
+                    let dy =
+                        Number(msg.dy);
+
+                    if (!Number.isFinite(dx))
+                        dx = 0;
+
+                    if (!Number.isFinite(dy))
+                        dy = 0;
+
+                    /*
+                      Limit client input.
+                    */
+
+                    dx =
+                        clamp(
+                            dx,
+                            -1000,
+                            1000
+                        );
+
+                    dy =
+                        clamp(
+                            dy,
+                            -1000,
+                            1000
+                        );
+
+                    player.input.dx = dx;
+                    player.input.dy = dy;
+
+                    player.input.boost =
+                        msg.boost === true;
+
+                }
+                catch (error) {
+
+                    console.log(
+                        "Invalid packet from",
+                        player.id
+                    );
+                }
+            }
+        );
 
 
-/* ============================================================
-   MAIN GAME LOOP
-============================================================ */
+        /*
+          DISCONNECT
+        */
 
-let lastTick=
+        ws.on(
+            "close",
+            () => {
+
+                players.delete(
+                    player.id
+                );
+
+                console.log(
+                    `DISCONNECTED: ${player.id}`
+                );
+            }
+        );
+
+
+        ws.on(
+            "error",
+            () => {
+
+                players.delete(
+                    player.id
+                );
+            }
+        );
+    }
+);
+
+
+/* =========================================================
+   GAME LOOP
+========================================================= */
+
+let lastTime =
     Date.now();
 
+setInterval(
+    () => {
 
-setInterval(()=>{
+        const now =
+            Date.now();
 
-    const now=
-        Date.now();
+        let dt =
+            (now - lastTime) /
+            1000;
 
+        lastTime = now;
 
-    const dtMs=
-        Math.min(
-            100,
-            now-lastTick
-        );
+        /*
+          Protect against huge jumps.
+        */
 
+        dt =
+            Math.min(
+                dt,
+                0.1
+            );
 
-    lastTick=now;
+        for (
+            const player
+            of players.values()
+        ) {
 
+            if (!player.alive)
+                continue;
 
-    const dt=
-        dtMs/16.6667;
+            updateMovement(
+                player,
+                dt
+            );
 
+            updateBoost(
+                player,
+                dt
+            );
 
-    /*
-    UPDATE PLAYERS
-    */
+            updateTimers(
+                player,
+                dt * 1000
+            );
 
-    for(const player of players.values()){
+            updateMagnet(
+                player
+            );
 
-        if(!player.alive)
-            continue;
+            eatFood(
+                player
+            );
+        }
 
+        checkPlayerCollisions();
 
-        updatePlayerMovement(
-            player,
-            dt
-        );
-
-
-        updateBoost(
-            player,
-            dtMs/1000
-        );
-
-
-        updateTimers(
-            player,
-            dtMs
-        );
-
-
-        updateMagnet(
-            player
-        );
-
-
-        eatFood(
-            player
-        );
-
-
-        updateBodyLength(
-            player
-        );
-
-    }
+    },
+    1000 / SETTINGS.tickRate
+);
 
 
-    /*
-    COLLISIONS
-    */
-
-    checkPlayerCollisions();
-
-
-},1000/SETTINGS.tickRate);
-
-
-/* ============================================================
+/* =========================================================
    STATE LOOP
-============================================================ */
+========================================================= */
 
-setInterval(()=>{
+setInterval(
+    () => {
 
-    broadcastState();
+        for (
+            const player
+            of players.values()
+        ) {
 
-},1000/SETTINGS.stateRate);
+            sendState(player);
+        }
+
+    },
+    1000 / SETTINGS.stateRate
+);
 
 
-/* ============================================================
+/* =========================================================
    FOOD MAINTENANCE
-============================================================ */
+========================================================= */
 
-setInterval(()=>{
+setInterval(
+    () => {
 
-    const missing=
-        SETTINGS.maxFood-
-        foods.length;
+        while (
+            foods.length <
+            SETTINGS.maxFood
+        ) {
 
-
-    if(missing<=0)
-        return;
-
-
-    const count=
-        Math.min(
-            SETTINGS.foodSpawnBatch,
-            missing
-        );
-
-
-    for(
-        let i=0;
-        i<count;
-        i++
-    ){
-
-        spawnFood();
-
-    }
-
-},1000);
-
-
-/* ============================================================
-   CLEANUP OLD DEAD CONNECTIONS
-============================================================ */
-
-setInterval(()=>{
-
-    for(const [id,player] of players){
-
-        if(
-            !player.ws ||
-            player.ws.readyState ===
-            WebSocket.CLOSED
-        ){
-
-            players.delete(id);
+            spawnFood();
 
         }
 
-    }
+    },
+    1000
+);
 
-},10000);
+
+/* =========================================================
+   CLEANUP
+========================================================= */
+
+setInterval(
+    () => {
+
+        for (
+            const [id, player]
+            of players
+        ) {
+
+            if (
+                !player.ws ||
+                player.ws.readyState ===
+                WebSocket.CLOSED
+            ) {
+
+                players.delete(id);
+            }
+        }
+
+    },
+    10000
+);
 
 
-/* ============================================================
-   SERVER ERROR HANDLING
-============================================================ */
+/* =========================================================
+   ERRORS
+========================================================= */
 
 process.on(
     "uncaughtException",
-    err=>{
+    error => {
 
         console.error(
-            "UNCAUGHT ERROR:",
-            err
+            "SERVER ERROR:",
+            error
         );
-
     }
 );
 
 
 process.on(
     "unhandledRejection",
-    err=>{
+    error => {
 
         console.error(
-            "UNHANDLED REJECTION:",
-            err
+            "PROMISE ERROR:",
+            error
         );
+    }
+);
 
+
+/* =========================================================
+   START
+========================================================= */
+
+httpServer.listen(
+    PORT,
+    () => {
+
+        console.log("");
+        console.log(
+            "================================"
+        );
+        console.log(
+            "🐑 FLOCK.IO SERVER ONLINE"
+        );
+        console.log(
+            "================================"
+        );
+        console.log(
+            `http://localhost:${PORT}`
+        );
+        console.log(
+            `Players: ${players.size}`
+        );
+        console.log(
+            `Food: ${foods.length}`
+        );
+        console.log(
+            "================================"
+        );
+        console.log("");
     }
 );
 ```
