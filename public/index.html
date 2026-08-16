@@ -51,45 +51,6 @@ let myId = null, world = { w: 6000, h: 6000 }, hungerLimitMs = 300000;
 let state = { players: [], foods: [], kingSheepId:null, kingWolfId:null, leaderboard:[] };
 let camera = { x: world.w/2, y: world.h/2 };
 
-// decorative flowers — fixed positions scattered across the world, computed once
-// we know the world size. Purely visual, same on every client, never synced.
-let flowers = [];
-const FLOWER_EMOJI = ['🌸','🌼','🌻','🌷','🌺'];
-function hash2(ix, iy){
-  let h = ix * 374761393 + iy * 668265263;
-  h = (h ^ (h >> 13)) * 1274126177;
-  return ((h ^ (h >> 16)) >>> 0) / 4294967295;
-}
-function buildFlowers(){
-  flowers = [];
-  const cell = 260;
-  for (let gx = 0; gx * cell < world.w; gx++){
-    for (let gy = 0; gy * cell < world.h; gy++){
-      const r = hash2(gx, gy);
-      if (r < 0.16){
-        flowers.push({
-          x: gx*cell + hash2(gx*7+1, gy*3+1)*cell,
-          y: gy*cell + hash2(gx*3+2, gy*7+2)*cell,
-          emoji: FLOWER_EMOJI[Math.floor(hash2(gx*11, gy*13)*FLOWER_EMOJI.length)],
-        });
-      }
-    }
-  }
-}
-
-// decorative butterflies — float around independently on each client, purely cosmetic
-let butterflies = [];
-function buildButterflies(){
-  butterflies = [];
-  for (let i=0;i<24;i++){
-    butterflies.push({
-      baseX: Math.random()*world.w, baseY: Math.random()*world.h,
-      phase: Math.random()*Math.PI*2, speed: 0.5 + Math.random()*0.6,
-      radius: 40 + Math.random()*60,
-    });
-  }
-}
-
 const proto = location.protocol === 'https:' ? 'wss' : 'ws';
 const ws = new WebSocket(proto + '://' + location.host);
 ws.onopen = () => { document.getElementById('status').textContent = 'connected'; };
@@ -97,10 +58,7 @@ ws.onclose = () => { document.getElementById('status').textContent = 'disconnect
 ws.onerror = () => { document.getElementById('status').textContent = 'connection error'; };
 ws.onmessage = (event) => {
   const msg = JSON.parse(event.data);
-  if (msg.type === 'welcome'){
-    myId = msg.id; world = msg.world; hungerLimitMs = msg.hungerLimitMs;
-    buildFlowers(); buildButterflies();
-  }
+  if (msg.type === 'welcome'){ myId = msg.id; world = msg.world; hungerLimitMs = msg.hungerLimitMs; }
   else if (msg.type === 'state'){ state = msg; }
 };
 
